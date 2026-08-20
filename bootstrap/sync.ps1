@@ -37,6 +37,63 @@ function New-OrRepairJunction {
     }
 }
 
+function Get-ExternalMarketplaces {
+    param([string]$RepoRoot)
+    $path = Join-Path $RepoRoot "bootstrap\external-marketplaces.json"
+    if (-not (Test-Path $path)) { return @() }
+    $json = Get-Content $path -Raw | ConvertFrom-Json
+    if (-not $json.PSObject.Properties['marketplaces']) { return @() }
+    return @($json.marketplaces)
+}
+
+function Resolve-MarketplaceUrl {
+    param([string]$Repo)
+    if ($Repo -match '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
+        return "https://github.com/$Repo.git"
+    }
+    return $Repo
+}
+
+function Sync-VendorCache {
+    param([string]$RepoRoot, [string]$VendorCacheDir)
+
+    $marketplaces = Get-ExternalMarketplaces -RepoRoot $RepoRoot
+    $failures = @()
+
+    foreach ($mp in $marketplaces) {
+        $dest = Join-Path $VendorCacheDir $mp.name
+        $currentSha = $null
+        if (Test-Path (Join-Path $dest ".git")) {
+            Push-Location $dest
+            try { $currentSha = (& git rev-parse HEAD 2>$null | Out-String).Trim() } finally { Pop-Location }
+        }
+        if ($currentSha -eq $mp.pinnedCommit) { continue }
+
+        if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
+        New-Item -ItemType Directory -Path $dest -Force | Out-Null
+
+        $url = Resolve-MarketplaceUrl -Repo $mp.repo
+        Push-Location $dest
+        try {
+            & git init -q 2>&1 | Out-Null
+            & git remote add origin $url 2>&1 | Out-Null
+            & git fetch --depth 1 origin $mp.pinnedCommit 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                $failures += "Marketplace '$($mp.name)': failed to fetch commit '$($mp.pinnedCommit)' from '$url' — it may no longer exist upstream."
+                continue
+            }
+            & git checkout -q FETCH_HEAD 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                $failures += "Marketplace '$($mp.name)': failed to check out pinned commit '$($mp.pinnedCommit)'."
+            }
+        } finally {
+            Pop-Location
+        }
+    }
+
+    return $failures
+}
+
 function Sync-CodexSkills {
     param([string]$RepoRoot, [string]$CodexSkillsDir)
 
