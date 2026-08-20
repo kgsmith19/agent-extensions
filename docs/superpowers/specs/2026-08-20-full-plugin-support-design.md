@@ -112,10 +112,18 @@ same "nothing propagates automatically" philosophy as the existing
   cover `.vendor-cache/<marketplace>/<plugin>`, plus the same MCP reshape
   targeting Antigravity's `mcp_config.json` format.
 
-Both translators are hand-rolled in the existing PowerShell/bash sync
-scripts — MCP server definitions are simple flat structures (command, args,
-env, or url, headers), not general TOML/JSON, so no new runtime dependency
-(Python/Node) is justified.
+Both translators live in the existing PowerShell/bash sync scripts. PowerShell
+needs no new dependency — `ConvertFrom-Json`/`ConvertTo-Json` are native
+cmdlets. Bash has no native JSON parser, and `jq` is not guaranteed present
+(confirmed absent on Kyle's own dev machine while scoping this plan) —
+hand-rolling a JSON parser in pure bash for arbitrary nested MCP configs
+(nested `env` objects, `args` arrays, escaped strings) is exactly the
+fragile-parsing risk this design's error-handling section warns against, so
+`sync.sh` requires `jq` for the MCP-translation path specifically (not for
+the rest of the script), checked at the start of that path with a loud,
+actionable error if missing — never a silent skip. TOML *generation* (the
+output side, for Codex) stays hand-rolled in both languages either way,
+since it's simple flat output, not parsing.
 
 ## Data flow
 
