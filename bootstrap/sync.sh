@@ -8,6 +8,10 @@ SKIP_CLAUDE_CODE="${SKIP_CLAUDE_CODE:-}"
 
 get_plugin_names() {
   local repo_root="$1"
+  if [ ! -d "$repo_root/plugins" ]; then
+    echo "No plugins directory at '$repo_root/plugins'" >&2
+    return 1
+  fi
   find "$repo_root/plugins" -mindepth 1 -maxdepth 1 -type d -exec basename {} \;
 }
 
@@ -28,7 +32,7 @@ new_or_repair_symlink() {
     rm "$link_path"
   fi
 
-  if ! ln -s "$target_path" "$link_path"; then
+  if ! ln -s "$target_path" "$link_path" || [ ! -L "$link_path" ]; then
     echo "Failed to create symlink '$link_path' -> '$target_path'" >&2
     return 1
   fi
@@ -39,8 +43,15 @@ sync_codex_skills() {
   local codex_skills_dir="$2"
   mkdir -p "$codex_skills_dir"
 
+  local plugin_names
+  mapfile -t plugin_names < <(get_plugin_names "$repo_root") || return 1
+  if [ ${#plugin_names[@]} -eq 0 ]; then
+    echo "No plugins found under '$repo_root/plugins'" >&2
+    return 1
+  fi
+
   local plugin skills_root
-  while IFS= read -r plugin; do
+  for plugin in "${plugin_names[@]}"; do
     skills_root="$repo_root/plugins/$plugin/skills"
     [ -d "$skills_root" ] || continue
     local skill_dir skill_name
@@ -49,7 +60,7 @@ sync_codex_skills() {
       skill_name="$(basename "$skill_dir")"
       new_or_repair_symlink "$codex_skills_dir/$skill_name" "${skill_dir%/}"
     done
-  done < <(get_plugin_names "$repo_root")
+  done
 }
 
 sync_antigravity_plugins() {
@@ -57,21 +68,41 @@ sync_antigravity_plugins() {
   local antigravity_plugins_dir="$2"
   mkdir -p "$antigravity_plugins_dir"
 
+  local plugin_names
+  mapfile -t plugin_names < <(get_plugin_names "$repo_root") || return 1
+  if [ ${#plugin_names[@]} -eq 0 ]; then
+    echo "No plugins found under '$repo_root/plugins'" >&2
+    return 1
+  fi
+
   local plugin
-  while IFS= read -r plugin; do
+  for plugin in "${plugin_names[@]}"; do
     new_or_repair_symlink "$antigravity_plugins_dir/$plugin" "$repo_root/plugins/$plugin"
-  done < <(get_plugin_names "$repo_root")
+  done
 }
 
 sync_claude_code_marketplace() {
   local repo_root="$1"
 
-  claude plugin marketplace add "$repo_root"
+  if ! claude plugin marketplace add "$repo_root"; then
+    echo "claude plugin marketplace add '$repo_root' failed" >&2
+    return 1
+  fi
+
+  local plugin_names
+  mapfile -t plugin_names < <(get_plugin_names "$repo_root") || return 1
+  if [ ${#plugin_names[@]} -eq 0 ]; then
+    echo "No plugins found under '$repo_root/plugins'" >&2
+    return 1
+  fi
 
   local plugin
-  while IFS= read -r plugin; do
-    claude plugin install "$plugin@agent-extensions"
-  done < <(get_plugin_names "$repo_root")
+  for plugin in "${plugin_names[@]}"; do
+    if ! claude plugin install "$plugin@agent-extensions"; then
+      echo "claude plugin install '$plugin@agent-extensions' failed" >&2
+      return 1
+    fi
+  done
 }
 
 if [ "${1:-}" = "--import" ]; then
