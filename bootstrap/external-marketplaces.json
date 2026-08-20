@@ -1,0 +1,57 @@
+{
+  "marketplaces": [
+    {
+      "name": "claude-plugins-official",
+      "repo": "anthropics/claude-plugins-official",
+      "pinnedCommit": "cbe94d02bc8ea7375e13b39cc400e17eeabfcbee",
+      "plugins": [
+        "agent-sdk-dev",
+        "atomic-agents",
+        "auth0",
+        "claude-code-setup",
+        "claude-md-management",
+        "claude-security",
+        "code-review",
+        "code-simplifier",
+        "commit-commands",
+        "explanatory-output-style",
+        "feature-dev",
+        "figma",
+        "frontend-design",
+        "github",
+        "greptile",
+        "hookify",
+        "learning-output-style",
+        "liquid-skills",
+        "mcp-server-dev",
+        "mintlify",
+        "playground",
+        "playwright",
+        "plugin-dev",
+        "postman",
+        "pr-review-toolkit",
+        "ralph-loop",
+        "security-guidance",
+        "session-report",
+        "sourcegraph",
+        "supabase",
+        "superpowers",
+        "ui-theme-designer"
+      ]
+    },
+    {
+      "name": "superpowers-marketplace",
+      "repo": "obra/superpowers-marketplace",
+      "pinnedCommit": "1ab7b8eeef707f21565471f11d3782fac3dd1c61",
+      "plugins": [
+        "claude-session-driver",
+        "double-shot-latte",
+        "elements-of-style",
+        "episodic-memory",
+        "private-journal-mcp",
+        "superpowers-chrome",
+        "superpowers-lab"
+      ]
+    }
+  ]
+}
