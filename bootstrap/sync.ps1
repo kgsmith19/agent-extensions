@@ -69,8 +69,20 @@ function Sync-VendorCache {
         }
         if ($currentSha -eq $mp.pinnedCommit) { continue }
 
-        if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
-        New-Item -ItemType Directory -Path $dest -Force | Out-Null
+        if (Test-Path $dest) {
+            try {
+                Remove-Item $dest -Recurse -Force
+            } catch {
+                $failures += "Marketplace '$($mp.name)': failed to clear existing vendor-cache directory '$dest' — $($_.Exception.Message)"
+                continue
+            }
+        }
+        try {
+            New-Item -ItemType Directory -Path $dest -Force | Out-Null
+        } catch {
+            $failures += "Marketplace '$($mp.name)': failed to create vendor-cache directory '$dest' — $($_.Exception.Message)"
+            continue
+        }
 
         $url = Resolve-MarketplaceUrl -Repo $mp.repo
         Push-Location $dest

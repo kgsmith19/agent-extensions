@@ -84,8 +84,16 @@ sync_vendor_cache() {
       continue
     fi
 
-    rm -rf "$dest"
-    mkdir -p "$dest"
+    if ! rm -rf "$dest"; then
+      echo "Marketplace '$name': failed to clear existing vendor-cache directory '$dest'" >&2
+      failed=1
+      continue
+    fi
+    if ! mkdir -p "$dest"; then
+      echo "Marketplace '$name': failed to create vendor-cache directory '$dest'" >&2
+      failed=1
+      continue
+    fi
     url="$(resolve_marketplace_url "$repo")"
 
     if ! git -C "$dest" init -q \
