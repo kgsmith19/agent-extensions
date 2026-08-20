@@ -169,6 +169,41 @@ mcp_json_to_codex_toml() {
   printf '%s' "$out"
 }
 
+mcp_json_to_antigravity_config() {
+  local mcp_servers_json="$1"
+
+  local names name server has_command has_url allowed_regex unknown
+  names="$(echo "$mcp_servers_json" | jq -r 'keys[]')"
+
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    server="$(echo "$mcp_servers_json" | jq -c --arg n "$name" '.[$n]')"
+    has_command="$(echo "$server" | jq 'has("command")')"
+    has_url="$(echo "$server" | jq 'has("url")')"
+
+    if [ "$has_command" = "false" ] && [ "$has_url" = "false" ]; then
+      echo "MCP server '$name' has neither 'command' (stdio) nor 'url' (http) — unrecognized server shape." >&2
+      return 1
+    fi
+    if [ "$has_command" = "true" ] && [ "$has_url" = "true" ]; then
+      echo "MCP server '$name' has both 'command' and 'url' — ambiguous transport, cannot translate." >&2
+      return 1
+    fi
+    if [ "$has_command" = "true" ]; then
+      allowed_regex='^(command|args|env)$'
+    else
+      allowed_regex='^(url|headers)$'
+    fi
+    unknown="$(echo "$server" | jq -r --arg re "$allowed_regex" 'keys[] | select(test($re) | not)')"
+    if [ -n "$unknown" ]; then
+      echo "MCP server '$name' has unrecognized field(s): $(echo "$unknown" | tr '\n' ' ')." >&2
+      return 1
+    fi
+  done <<< "$names"
+
+  jq -n --argjson servers "$mcp_servers_json" '{mcpServers: $servers}'
+}
+
 sync_codex_skills() {
   local repo_root="$1"
   local codex_skills_dir="$2"

@@ -166,6 +166,36 @@ function ConvertTo-CodexMcpToml {
     return ($lines -join "`n").Trim()
 }
 
+function ConvertTo-AntigravityMcpConfig {
+    param($McpServers)
+
+    $stdioAllowed = @('command', 'args', 'env')
+    $httpAllowed = @('url', 'headers')
+
+    foreach ($prop in $McpServers.PSObject.Properties) {
+        $serverName = $prop.Name
+        $server = $prop.Value
+        $propNames = @($server.PSObject.Properties.Name)
+        $hasCommand = $propNames -contains 'command'
+        $hasUrl = $propNames -contains 'url'
+
+        if (-not $hasCommand -and -not $hasUrl) {
+            throw "MCP server '$serverName' has neither 'command' (stdio) nor 'url' (http) — unrecognized server shape."
+        }
+        if ($hasCommand -and $hasUrl) {
+            throw "MCP server '$serverName' has both 'command' and 'url' — ambiguous transport, cannot translate."
+        }
+        $allowed = if ($hasCommand) { $stdioAllowed } else { $httpAllowed }
+        $unknown = @($propNames | Where-Object { $allowed -notcontains $_ })
+        if ($unknown.Count -gt 0) {
+            throw "MCP server '$serverName' has unrecognized field(s): $($unknown -join ', ')."
+        }
+    }
+
+    $wrapped = [PSCustomObject]@{ mcpServers = $McpServers }
+    return ($wrapped | ConvertTo-Json -Depth 10)
+}
+
 function Sync-CodexSkills {
     param([string]$RepoRoot, [string]$CodexSkillsDir)
 
