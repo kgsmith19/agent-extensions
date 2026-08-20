@@ -273,6 +273,63 @@ sync_codex_skills() {
   done
 }
 
+sync_external_codex_content() {
+  local repo_root="$1"
+  local vendor_cache_dir="$2"
+  local codex_skills_dir="$3"
+  local codex_config_path="$4"
+
+  local failed=0
+  local merge_args=()
+  local mp_json name plugin_line plugin plugin_dir skills_root mcp_path mcp_servers toml
+
+  while IFS= read -r mp_json; do
+    [ -n "$mp_json" ] || continue
+    name="$(echo "$mp_json" | jq -r '.name')"
+
+    while IFS= read -r plugin_line; do
+      plugin="$(echo "$plugin_line" | jq -r '.')"
+      [ -n "$plugin" ] || continue
+      plugin_dir="$vendor_cache_dir/$name/$plugin"
+
+      skills_root="$plugin_dir/skills"
+      if [ -d "$skills_root" ]; then
+        local skill_dir skill_name
+        for skill_dir in "$skills_root"/*/; do
+          [ -d "$skill_dir" ] || continue
+          skill_name="$(basename "$skill_dir")"
+          if ! new_or_repair_symlink "$codex_skills_dir/$skill_name" "${skill_dir%/}"; then
+            echo "Plugin '$plugin' (from '$name'): failed to link skill '$skill_name'" >&2
+            failed=1
+          fi
+        done
+      fi
+
+      mcp_path="$plugin_dir/.mcp.json"
+      if [ -f "$mcp_path" ]; then
+        mcp_servers="$(jq -c '.mcpServers // {}' "$mcp_path")"
+        if toml="$(mcp_json_to_codex_toml "$mcp_servers")"; then
+          if [ -n "$toml" ]; then
+            merge_args+=("$plugin" "$toml")
+          fi
+        else
+          echo "Plugin '$plugin' (from '$name'): MCP translation to Codex TOML failed" >&2
+          failed=1
+        fi
+      fi
+    done < <(echo "$mp_json" | jq -c '.plugins[]')
+  done < <(get_external_marketplaces_json "$repo_root")
+
+  if [ ${#merge_args[@]} -gt 0 ]; then
+    if ! merge_codex_mcp_config "$codex_config_path" "${merge_args[@]}"; then
+      echo "Failed to merge translated MCP servers into '$codex_config_path'" >&2
+      failed=1
+    fi
+  fi
+
+  return $failed
+}
+
 sync_antigravity_plugins() {
   local repo_root="$1"
   local antigravity_plugins_dir="$2"

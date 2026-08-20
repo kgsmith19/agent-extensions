@@ -279,6 +279,56 @@ function Sync-CodexSkills {
     return $true
 }
 
+function Sync-ExternalCodexContent {
+    param([string]$RepoRoot, [string]$VendorCacheDir, [string]$CodexSkillsDir, [string]$CodexConfigPath)
+
+    $marketplaces = Get-ExternalMarketplaces -RepoRoot $RepoRoot
+    $failures = @()
+    $tomlByPlugin = @{}
+
+    foreach ($mp in $marketplaces) {
+        foreach ($pluginName in $mp.plugins) {
+            $pluginDir = Join-Path $VendorCacheDir "$($mp.name)\$pluginName"
+
+            $skillsRoot = Join-Path $pluginDir "skills"
+            if (Test-Path $skillsRoot) {
+                Get-ChildItem $skillsRoot -Directory | ForEach-Object {
+                    try {
+                        $link = Join-Path $CodexSkillsDir $_.Name
+                        New-OrRepairJunction -LinkPath $link -TargetPath $_.FullName
+                    } catch {
+                        $failures += "Plugin '$pluginName' (from '$($mp.name)'): failed to link skill '$($_.Name)' — $($_.Exception.Message)"
+                    }
+                }
+            }
+
+            $mcpPath = Join-Path $pluginDir ".mcp.json"
+            if (Test-Path $mcpPath) {
+                try {
+                    $mcpJson = Get-Content $mcpPath -Raw | ConvertFrom-Json
+                    $servers = if ($mcpJson.PSObject.Properties['mcpServers']) { $mcpJson.mcpServers } else { [PSCustomObject]@{} }
+                    $toml = ConvertTo-CodexMcpToml -McpServers $servers
+                    if (-not [string]::IsNullOrWhiteSpace($toml)) {
+                        $tomlByPlugin[$pluginName] = $toml
+                    }
+                } catch {
+                    $failures += "Plugin '$pluginName' (from '$($mp.name)'): MCP translation to Codex TOML failed — $($_.Exception.Message)"
+                }
+            }
+        }
+    }
+
+    if ($tomlByPlugin.Count -gt 0) {
+        try {
+            Merge-CodexMcpConfig -ConfigPath $CodexConfigPath -TomlByPlugin $tomlByPlugin
+        } catch {
+            $failures += "Failed to merge translated MCP servers into '$CodexConfigPath' — $($_.Exception.Message)"
+        }
+    }
+
+    return $failures
+}
+
 function Sync-AntigravityPlugins {
     param([string]$RepoRoot, [string]$AntigravityPluginsDir)
 
