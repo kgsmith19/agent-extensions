@@ -53,6 +53,8 @@ function Sync-CodexSkills {
             New-OrRepairJunction -LinkPath $link -TargetPath $target
         }
     }
+
+    return $true
 }
 
 function Sync-AntigravityPlugins {
@@ -67,6 +69,8 @@ function Sync-AntigravityPlugins {
         $link = Join-Path $AntigravityPluginsDir $plugin
         New-OrRepairJunction -LinkPath $link -TargetPath $target
     }
+
+    return $true
 }
 
 function Sync-ClaudeCodeMarketplace {
