@@ -196,6 +196,48 @@ function ConvertTo-AntigravityMcpConfig {
     return ($wrapped | ConvertTo-Json -Depth 10)
 }
 
+function Merge-CodexMcpConfig {
+    param([string]$ConfigPath, [hashtable]$TomlByPlugin)
+
+    $beginMarker = "# >>> agent-extensions managed mcp_servers (do not edit within this block) >>>"
+    $endMarker = "# <<< agent-extensions managed mcp_servers <<<"
+
+    $existing = ""
+    if (Test-Path $ConfigPath) {
+        $existing = Get-Content $ConfigPath -Raw
+    }
+
+    $beginIdx = $existing.IndexOf($beginMarker)
+    $endIdx = $existing.IndexOf($endMarker)
+    if ($beginIdx -ge 0 -and $endIdx -ge 0) {
+        $before = $existing.Substring(0, $beginIdx).TrimEnd()
+        $after = $existing.Substring($endIdx + $endMarker.Length).TrimStart()
+        $parts = @($before, $after) | Where-Object { $_ -ne "" }
+        $existing = $parts -join "`n`n"
+    } else {
+        $existing = $existing.TrimEnd()
+    }
+
+    $blockLines = @($beginMarker)
+    foreach ($plugin in ($TomlByPlugin.Keys | Sort-Object)) {
+        $toml = $TomlByPlugin[$plugin]
+        if ([string]::IsNullOrWhiteSpace($toml)) { continue }
+        $blockLines += "# plugin: $plugin"
+        $blockLines += $toml.TrimEnd()
+        $blockLines += ""
+    }
+    $blockLines += $endMarker
+    $block = ($blockLines -join "`n")
+
+    $parentDir = Split-Path -Parent $ConfigPath
+    if (-not (Test-Path $parentDir)) {
+        New-Item -ItemType Directory -Path $parentDir -Force | Out-Null
+    }
+
+    $final = if ([string]::IsNullOrWhiteSpace($existing)) { "$block`n" } else { "$existing`n`n$block`n" }
+    Set-Content -Path $ConfigPath -Value $final -NoNewline
+}
+
 function Sync-CodexSkills {
     param([string]$RepoRoot, [string]$CodexSkillsDir)
 

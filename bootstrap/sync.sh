@@ -204,6 +204,42 @@ mcp_json_to_antigravity_config() {
   jq -n --argjson servers "$mcp_servers_json" '{mcpServers: $servers}'
 }
 
+merge_codex_mcp_config() {
+  local config_path="$1"
+  shift
+  local begin_marker="# >>> agent-extensions managed mcp_servers (do not edit within this block) >>>"
+  local end_marker="# <<< agent-extensions managed mcp_servers <<<"
+
+  local existing=""
+  [ -f "$config_path" ] && existing="$(cat "$config_path")"
+
+  local before
+  before="$(awk -v b="$begin_marker" -v e="$end_marker" '
+    $0==b {skip=1; next}
+    $0==e {skip=0; next}
+    skip {next}
+    {print}
+  ' <<< "$existing")"
+
+  local block="$begin_marker"$'\n'
+  while [ $# -ge 2 ]; do
+    local plugin="$1" toml="$2"
+    shift 2
+    [ -n "$toml" ] || continue
+    block+="# plugin: $plugin"$'\n'
+    block+="$toml"$'\n'
+  done
+  block+="$end_marker"
+
+  mkdir -p "$(dirname "$config_path")"
+  {
+    if [ -n "$(printf '%s' "$before" | tr -d '[:space:]')" ]; then
+      printf '%s\n\n' "$before"
+    fi
+    printf '%s\n' "$block"
+  } > "$config_path"
+}
+
 sync_codex_skills() {
   local repo_root="$1"
   local codex_skills_dir="$2"
