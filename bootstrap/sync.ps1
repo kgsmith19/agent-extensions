@@ -249,6 +249,16 @@ function Merge-CodexMcpConfig {
     Set-Content -Path $ConfigPath -Value $final -NoNewline
 }
 
+function Write-AntigravityMcpConfig {
+    param([string]$PluginStagedDir, [string]$JsonContent)
+    if ([string]::IsNullOrWhiteSpace($JsonContent)) { return }
+    if (-not (Test-Path $PluginStagedDir)) {
+        New-Item -ItemType Directory -Path $PluginStagedDir -Force | Out-Null
+    }
+    $target = Join-Path $PluginStagedDir "mcp_config.json"
+    Set-Content -Path $target -Value $JsonContent -NoNewline
+}
+
 function Sync-CodexSkills {
     param([string]$RepoRoot, [string]$CodexSkillsDir)
 

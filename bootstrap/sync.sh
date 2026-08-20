@@ -240,6 +240,14 @@ merge_codex_mcp_config() {
   } > "$config_path"
 }
 
+write_antigravity_mcp_config() {
+  local plugin_staged_dir="$1"
+  local json_content="$2"
+  [ -n "$json_content" ] || return 0
+  mkdir -p "$plugin_staged_dir"
+  printf '%s' "$json_content" > "$plugin_staged_dir/mcp_config.json"
+}
+
 sync_codex_skills() {
   local repo_root="$1"
   local codex_skills_dir="$2"
