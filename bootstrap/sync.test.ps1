@@ -14,7 +14,7 @@ New-Item -ItemType Directory -Path $antigravityDir -Force | Out-Null
 $failures = @()
 
 # --- Codex linking ---
-Sync-CodexSkills -RepoRoot $RepoRoot -CodexSkillsDir $codexDir
+Sync-CodexSkills -RepoRoot $RepoRoot -CodexSkillsDir $codexDir | Out-Null
 
 foreach ($skill in @("canvas-design", "web-artifacts-builder", "skill-creator")) {
     $linkPath = Join-Path $codexDir $skill
@@ -27,14 +27,14 @@ foreach ($skill in @("canvas-design", "web-artifacts-builder", "skill-creator"))
 }
 
 # --- Idempotency: run again, expect no error and no duplicate/broken state ---
-Sync-CodexSkills -RepoRoot $RepoRoot -CodexSkillsDir $codexDir
+Sync-CodexSkills -RepoRoot $RepoRoot -CodexSkillsDir $codexDir | Out-Null
 $recheck = Get-Item (Join-Path $codexDir "skill-creator") -ErrorAction SilentlyContinue
 if (-not $recheck -or -not $recheck.LinkType) {
     $failures += "Codex: second sync run broke the skill-creator link"
 }
 
 # --- Antigravity linking ---
-Sync-AntigravityPlugins -RepoRoot $RepoRoot -AntigravityPluginsDir $antigravityDir
+Sync-AntigravityPlugins -RepoRoot $RepoRoot -AntigravityPluginsDir $antigravityDir | Out-Null
 
 foreach ($plugin in @("anthropic-product-skills", "general-skills")) {
     $linkPath = Join-Path $antigravityDir $plugin
