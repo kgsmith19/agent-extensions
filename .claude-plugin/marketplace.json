@@ -1,0 +1,21 @@
+{
+  "name": "agent-extensions",
+  "description": "Kyle's personal cross-provider skills marketplace",
+  "owner": { "name": "Kyle Smith" },
+  "plugins": [
+    {
+      "name": "anthropic-product-skills",
+      "description": "Claude.ai product-surface skills (Canvas, Artifacts), vendored from anthropics/skills",
+      "version": "1.0.0",
+      "source": "./plugins/anthropic-product-skills",
+      "author": { "name": "Kyle Smith" }
+    },
+    {
+      "name": "general-skills",
+      "description": "Cross-provider personal skills, starting with skill-creator (vendored from anthropics/skills)",
+      "version": "1.0.0",
+      "source": "./plugins/general-skills",
+      "author": { "name": "Kyle Smith" }
+    }
+  ]
+}

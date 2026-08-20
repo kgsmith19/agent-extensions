@@ -1,0 +1,6 @@
+{
+  "name": "general-skills",
+  "version": "1.0.0",
+  "description": "Cross-provider personal skills, starting with skill-creator (vendored from anthropics/skills)",
+  "skills": "./skills/"
+}

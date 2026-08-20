@@ -1,0 +1,8 @@
+{
+  "name": "general-skills",
+  "description": "Cross-provider personal skills, starting with skill-creator (vendored from anthropics/skills)",
+  "version": "1.0.0",
+  "author": { "name": "Kyle Smith" },
+  "license": "Apache-2.0",
+  "keywords": ["skill-authoring"]
+}

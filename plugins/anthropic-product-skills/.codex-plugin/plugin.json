@@ -1,0 +1,6 @@
+{
+  "name": "anthropic-product-skills",
+  "version": "1.0.0",
+  "description": "Claude.ai product-surface skills (Canvas, Artifacts), vendored from anthropics/skills",
+  "skills": "./skills/"
+}
