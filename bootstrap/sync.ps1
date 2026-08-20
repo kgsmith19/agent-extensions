@@ -106,6 +106,66 @@ function Sync-VendorCache {
     return $failures
 }
 
+function ConvertTo-TomlString {
+    param([string]$Value)
+    $escaped = $Value -replace '\\', '\\\\' -replace '"', '\"'
+    return '"' + $escaped + '"'
+}
+
+function ConvertTo-CodexMcpToml {
+    param($McpServers)
+
+    $stdioAllowed = @('command', 'args', 'env')
+    $httpAllowed = @('url', 'headers')
+    $lines = @()
+
+    foreach ($prop in $McpServers.PSObject.Properties) {
+        $serverName = $prop.Name
+        $server = $prop.Value
+        $propNames = @($server.PSObject.Properties.Name)
+        $hasCommand = $propNames -contains 'command'
+        $hasUrl = $propNames -contains 'url'
+
+        if (-not $hasCommand -and -not $hasUrl) {
+            throw "MCP server '$serverName' has neither 'command' (stdio) nor 'url' (http) — unrecognized server shape."
+        }
+        if ($hasCommand -and $hasUrl) {
+            throw "MCP server '$serverName' has both 'command' and 'url' — ambiguous transport, cannot translate."
+        }
+
+        $allowed = if ($hasCommand) { $stdioAllowed } else { $httpAllowed }
+        $unknown = @($propNames | Where-Object { $allowed -notcontains $_ })
+        if ($unknown.Count -gt 0) {
+            throw "MCP server '$serverName' has unrecognized field(s): $($unknown -join ', ')."
+        }
+
+        $lines += "[mcp_servers.$serverName]"
+        if ($hasCommand) {
+            $lines += "command = $(ConvertTo-TomlString $server.command)"
+            if ($propNames -contains 'args') {
+                $argStrings = @($server.args | ForEach-Object { ConvertTo-TomlString $_ })
+                $lines += "args = [" + ($argStrings -join ", ") + "]"
+            }
+            if ($propNames -contains 'env') {
+                $envPairs = @($server.env.PSObject.Properties | ForEach-Object {
+                    "$($_.Name) = $(ConvertTo-TomlString $_.Value)"
+                })
+                $lines += "env = { " + ($envPairs -join ", ") + " }"
+            }
+        } else {
+            $lines += "url = $(ConvertTo-TomlString $server.url)"
+            if ($propNames -contains 'headers') {
+                $headerPairs = @($server.headers.PSObject.Properties | ForEach-Object {
+                    "$($_.Name) = $(ConvertTo-TomlString $_.Value)"
+                })
+                $lines += "http_headers = { " + ($headerPairs -join ", ") + " }"
+            }
+        }
+        $lines += ""
+    }
+    return ($lines -join "`n").Trim()
+}
+
 function Sync-CodexSkills {
     param([string]$RepoRoot, [string]$CodexSkillsDir)
 

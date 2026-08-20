@@ -112,6 +112,63 @@ sync_vendor_cache() {
   return $failed
 }
 
+mcp_json_to_codex_toml() {
+  local mcp_servers_json="$1"
+
+  local names name server has_command has_url allowed_regex unknown out=""
+  names="$(echo "$mcp_servers_json" | jq -r 'keys[]')"
+
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    server="$(echo "$mcp_servers_json" | jq -c --arg n "$name" '.[$n]')"
+    has_command="$(echo "$server" | jq 'has("command")')"
+    has_url="$(echo "$server" | jq 'has("url")')"
+
+    if [ "$has_command" = "false" ] && [ "$has_url" = "false" ]; then
+      echo "MCP server '$name' has neither 'command' (stdio) nor 'url' (http) — unrecognized server shape." >&2
+      return 1
+    fi
+    if [ "$has_command" = "true" ] && [ "$has_url" = "true" ]; then
+      echo "MCP server '$name' has both 'command' and 'url' — ambiguous transport, cannot translate." >&2
+      return 1
+    fi
+
+    if [ "$has_command" = "true" ]; then
+      allowed_regex='^(command|args|env)$'
+    else
+      allowed_regex='^(url|headers)$'
+    fi
+    unknown="$(echo "$server" | jq -r --arg re "$allowed_regex" 'keys[] | select(test($re) | not)')"
+    if [ -n "$unknown" ]; then
+      echo "MCP server '$name' has unrecognized field(s): $(echo "$unknown" | tr '\n' ' ')." >&2
+      return 1
+    fi
+
+    out+="[mcp_servers.$name]"$'\n'
+    if [ "$has_command" = "true" ]; then
+      out+="command = $(echo "$server" | jq '.command')"$'\n'
+      if echo "$server" | jq -e 'has("args")' >/dev/null; then
+        out+="args = $(echo "$server" | jq -c '.args')"$'\n'
+      fi
+      if echo "$server" | jq -e 'has("env")' >/dev/null; then
+        local env_pairs
+        env_pairs="$(echo "$server" | jq -r '.env | to_entries | map("\(.key) = \(.value | tojson)") | join(", ")')"
+        out+="env = { $env_pairs }"$'\n'
+      fi
+    else
+      out+="url = $(echo "$server" | jq '.url')"$'\n'
+      if echo "$server" | jq -e 'has("headers")' >/dev/null; then
+        local header_pairs
+        header_pairs="$(echo "$server" | jq -r '.headers | to_entries | map("\(.key) = \(.value | tojson)") | join(", ")')"
+        out+="http_headers = { $header_pairs }"$'\n'
+      fi
+    fi
+    out+=$'\n'
+  done <<< "$names"
+
+  printf '%s' "$out"
+}
+
 sync_codex_skills() {
   local repo_root="$1"
   local codex_skills_dir="$2"
