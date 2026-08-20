@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Builds a local git repo standing in for an external marketplace, with 4
+# Builds a local git repo standing in for an external marketplace, with 5
 # fixture plugins covering: skill-only (zero MCP servers), stdio MCP,
-# HTTP MCP, and a malformed MCP server (neither command nor url).
+# HTTP MCP, a semantically-malformed MCP server (neither command nor url),
+# and a syntactically-invalid .mcp.json (JSON parse error).
 new_fixture_marketplace() {
   local dest_dir="$1"
 
@@ -52,6 +53,11 @@ EOF
     }
   }
 }
+EOF
+
+  mkdir -p "$dest_dir/epsilon-invalid-json"
+  cat > "$dest_dir/epsilon-invalid-json/.mcp.json" <<'EOF'
+{ "mcpServers": { "broken": } }
 EOF
 
   (

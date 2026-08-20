@@ -21,7 +21,7 @@ cat > "$DECLARE_ROOT/bootstrap/external-marketplaces.json" <<EOF
 {
   "marketplaces": [
     { "name": "fixture-mp", "repo": "$FIXTURE_REPO", "pinnedCommit": "$SHA",
-      "plugins": ["alpha-skills", "beta-mcp-stdio", "gamma-mcp-http", "delta-malformed"] }
+      "plugins": ["alpha-skills", "beta-mcp-stdio", "gamma-mcp-http", "epsilon-invalid-json", "delta-malformed"] }
   ]
 }
 EOF
@@ -34,10 +34,18 @@ REPORTED_OK=1
 sync_external_codex_content "$DECLARE_ROOT" "$VENDOR_CACHE" "$CODEX_SKILLS_DIR" "$CODEX_CONFIG_PATH" 2>"$STDERR_CAPTURE" || REPORTED_OK=0
 
 if [ "$REPORTED_OK" = "1" ]; then
-  failures+=("Expected sync_external_codex_content to return non-zero for delta-malformed, it returned 0")
+  failures+=("Expected sync_external_codex_content to return non-zero for delta-malformed/epsilon-invalid-json, it returned 0")
 fi
 if ! grep -q "delta-malformed" "$STDERR_CAPTURE"; then
   failures+=("Expected a reported failure mentioning delta-malformed on stderr")
+fi
+# --- Regression: syntactically-invalid .mcp.json (JSON parse error, not just a
+# semantically-wrong shape) must be caught and reported per-plugin, not abort
+# the whole function via errexit — and processing must continue past it to
+# later plugins (delta-malformed, checked above, comes after epsilon in the
+# declared plugin order).
+if ! grep -q "epsilon-invalid-json" "$STDERR_CAPTURE"; then
+  failures+=("Expected a reported failure mentioning epsilon-invalid-json (invalid JSON) on stderr")
 fi
 
 if [ ! -L "$CODEX_SKILLS_DIR/greet" ]; then

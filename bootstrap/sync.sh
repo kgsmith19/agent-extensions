@@ -307,8 +307,10 @@ sync_external_codex_content() {
 
       mcp_path="$plugin_dir/.mcp.json"
       if [ -f "$mcp_path" ]; then
-        mcp_servers="$(jq -c '.mcpServers // {}' "$mcp_path")"
-        if toml="$(mcp_json_to_codex_toml "$mcp_servers")"; then
+        if ! mcp_servers="$(jq -c '.mcpServers // {}' "$mcp_path")"; then
+          echo "Plugin '$plugin' (from '$name'): failed to parse '$mcp_path' as JSON" >&2
+          failed=1
+        elif toml="$(mcp_json_to_codex_toml "$mcp_servers")"; then
           if [ -n "$toml" ]; then
             merge_args+=("$plugin" "$toml")
           fi

@@ -54,6 +54,10 @@ Say hello to the user.
 }
 '@
 
+    $epsilon = Join-Path $DestDir "epsilon-invalid-json"
+    New-Item -ItemType Directory -Path $epsilon -Force | Out-Null
+    Set-Content -Path (Join-Path $epsilon ".mcp.json") -Value '{ "mcpServers": { "broken": } }'
+
     Push-Location $DestDir
     try {
         & git init -q

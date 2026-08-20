@@ -18,7 +18,7 @@ $sha = New-FixtureMarketplace -DestDir $fixtureRepo
 $manifest = @{
     marketplaces = @(
         @{ name = "fixture-mp"; repo = $fixtureRepo; pinnedCommit = $sha;
-           plugins = @("alpha-skills", "beta-mcp-stdio", "gamma-mcp-http", "delta-malformed") }
+           plugins = @("alpha-skills", "beta-mcp-stdio", "gamma-mcp-http", "epsilon-invalid-json", "delta-malformed") }
     )
 } | ConvertTo-Json -Depth 10
 Set-Content -Path (Join-Path $declareRoot "bootstrap\external-marketplaces.json") -Value $manifest
@@ -31,6 +31,15 @@ $reported = Sync-ExternalCodexContent -RepoRoot $declareRoot -VendorCacheDir $ve
 # --- Partial-failure isolation: delta-malformed fails, others still succeed ---
 if ($reported.Count -eq 0) {
     $failures += "Expected a reported failure for delta-malformed, got none"
+}
+
+# --- Regression: syntactically-invalid .mcp.json (JSON parse error, not just a
+# semantically-wrong shape) must be caught and reported per-plugin, not throw
+# an uncaught terminating error that aborts the whole function — and
+# processing must continue past it to later plugins (delta-malformed, checked
+# above, comes after epsilon-invalid-json in the declared plugin order).
+if (-not ($reported | Where-Object { $_ -match 'epsilon-invalid-json' })) {
+    $failures += "Expected a reported failure mentioning epsilon-invalid-json (invalid JSON)"
 }
 
 $greetLink = Join-Path $codexSkillsDir "greet"
