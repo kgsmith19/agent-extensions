@@ -31,6 +31,16 @@ if mcp_json_to_codex_toml "$BAD_JSON" 2>/dev/null; then
   failures+=("malformed: expected mcp_json_to_codex_toml to fail, it did not")
 fi
 
+BOTH_JSON='{ "fixture-both": { "command": "node", "url": "https://example.com" } }'
+if mcp_json_to_codex_toml "$BOTH_JSON" 2>/dev/null; then
+  failures+=("malformed (both): expected mcp_json_to_codex_toml to fail, it did not")
+fi
+
+EXTRA_JSON='{ "fixture-extra": { "command": "node", "cwd": "/tmp" } }'
+if mcp_json_to_codex_toml "$EXTRA_JSON" 2>/dev/null; then
+  failures+=("malformed (extra field): expected mcp_json_to_codex_toml to fail, it did not")
+fi
+
 if [ ${#failures[@]} -gt 0 ]; then
   echo "FAIL: mcp_json_to_codex_toml"
   printf '  - %s\n' "${failures[@]}"

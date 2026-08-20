@@ -108,7 +108,7 @@ function Sync-VendorCache {
 
 function ConvertTo-TomlString {
     param([string]$Value)
-    $escaped = $Value -replace '\\', '\\\\' -replace '"', '\"'
+    $escaped = $Value -replace '\\', '\\' -replace '"', '\"'
     return '"' + $escaped + '"'
 }
 

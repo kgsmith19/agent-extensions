@@ -54,6 +54,38 @@ if (-not $threw) {
     $failures += "malformed: expected ConvertTo-CodexMcpToml to throw, it did not"
 }
 
+# --- malformed: both command and url ---
+$bothTransports = @'
+{ "fixture-both": { "command": "node", "url": "https://example.com" } }
+'@ | ConvertFrom-Json
+$threwBoth = $false
+try { ConvertTo-CodexMcpToml -McpServers $bothTransports | Out-Null } catch { $threwBoth = $true }
+if (-not $threwBoth) {
+    $failures += "malformed (both): expected ConvertTo-CodexMcpToml to throw, it did not"
+}
+
+# --- malformed: unrecognized field on an otherwise-valid stdio server ---
+$extraField = @'
+{ "fixture-extra": { "command": "node", "cwd": "/tmp" } }
+'@ | ConvertFrom-Json
+$threwExtra = $false
+try { ConvertTo-CodexMcpToml -McpServers $extraField | Out-Null } catch { $threwExtra = $true }
+if (-not $threwExtra) {
+    $failures += "malformed (extra field): expected ConvertTo-CodexMcpToml to throw, it did not"
+}
+
+# --- backslash escaping regression: command/args containing literal backslashes ---
+$pathServer = @'
+{ "fixture-path": { "command": "C:\\Tools\\node.exe", "args": ["C:\\scripts\\server.js"] } }
+'@ | ConvertFrom-Json
+$pathToml = ConvertTo-CodexMcpToml -McpServers $pathServer
+if ($pathToml -notmatch 'command = "C:\\\\Tools\\\\node\.exe"') {
+    $failures += "backslash escaping: command with backslashes not doubled correctly, got: $pathToml"
+}
+if ($pathToml -notmatch 'args = \["C:\\\\scripts\\\\server\.js"\]') {
+    $failures += "backslash escaping: args with backslashes not doubled correctly, got: $pathToml"
+}
+
 if ($failures.Count -gt 0) {
     Write-Output "FAIL: ConvertTo-CodexMcpToml"
     $failures | ForEach-Object { Write-Output "  - $_" }
