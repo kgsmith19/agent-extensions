@@ -50,6 +50,38 @@ if ($afterChange -notmatch [regex]::Escape('[some_other_section]')) {
     $failures += "Unrelated content was lost after a changed merge"
 }
 
+# --- Marker-looking substring embedded mid-line must not be treated as a real marker line ---
+$configPath2 = Join-Path $scratch "config2.toml"
+$trickyLine = 'some_field = "text containing # >>> agent-extensions managed mcp_servers (do not edit within this block) >>> inline"'
+$preExisting2 = @(
+    '[some_other_section]'
+    'foo = "bar"'
+    $trickyLine
+    '# >>> agent-extensions managed mcp_servers (do not edit within this block) >>>'
+    '# plugin: old-plugin'
+    '[mcp_servers.old-fixture]'
+    'command = "old"'
+    ''
+    '# <<< agent-extensions managed mcp_servers <<<'
+    'trailing_field = "keep me"'
+) -join "`n"
+Set-Content -Path $configPath2 -Value $preExisting2 -NoNewline
+
+Merge-CodexMcpConfig -ConfigPath $configPath2 -TomlByPlugin @{
+    "beta-mcp-stdio" = "[mcp_servers.fixture-stdio]`ncommand = `"node`""
+}
+$afterTricky = Get-Content $configPath2 -Raw
+
+if ($afterTricky -notmatch [regex]::Escape($trickyLine)) {
+    $failures += "Marker-looking substring embedded mid-line was corrupted (substring match false-positive on marker text)"
+}
+if ($afterTricky -notmatch [regex]::Escape('trailing_field = "keep me"')) {
+    $failures += "Content after the real managed block was lost"
+}
+if ($afterTricky -match [regex]::Escape('[mcp_servers.old-fixture]')) {
+    $failures += "Old managed block content was not replaced"
+}
+
 Remove-Item -Recurse -Force $scratch
 
 if ($failures.Count -gt 0) {

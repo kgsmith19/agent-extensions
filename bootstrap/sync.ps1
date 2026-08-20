@@ -202,20 +202,31 @@ function Merge-CodexMcpConfig {
     $beginMarker = "# >>> agent-extensions managed mcp_servers (do not edit within this block) >>>"
     $endMarker = "# <<< agent-extensions managed mcp_servers <<<"
 
-    $existing = ""
+    $existingLines = @()
     if (Test-Path $ConfigPath) {
-        $existing = Get-Content $ConfigPath -Raw
+        $existingLines = @(Get-Content $ConfigPath)
     }
 
-    $beginIdx = $existing.IndexOf($beginMarker)
-    $endIdx = $existing.IndexOf($endMarker)
+    $beginIdx = -1
+    $endIdx = -1
+    for ($i = 0; $i -lt $existingLines.Count; $i++) {
+        if ($existingLines[$i] -eq $beginMarker) { $beginIdx = $i; break }
+    }
+    if ($beginIdx -ge 0) {
+        for ($i = $beginIdx + 1; $i -lt $existingLines.Count; $i++) {
+            if ($existingLines[$i] -eq $endMarker) { $endIdx = $i; break }
+        }
+    }
+
     if ($beginIdx -ge 0 -and $endIdx -ge 0) {
-        $before = $existing.Substring(0, $beginIdx).TrimEnd()
-        $after = $existing.Substring($endIdx + $endMarker.Length).TrimStart()
+        $beforeLines = if ($beginIdx -gt 0) { @($existingLines[0..($beginIdx - 1)]) } else { @() }
+        $afterLines = if ($endIdx + 1 -lt $existingLines.Count) { @($existingLines[($endIdx + 1)..($existingLines.Count - 1)]) } else { @() }
+        $before = ($beforeLines -join "`n").TrimEnd()
+        $after = ($afterLines -join "`n").TrimStart()
         $parts = @($before, $after) | Where-Object { $_ -ne "" }
         $existing = $parts -join "`n`n"
     } else {
-        $existing = $existing.TrimEnd()
+        $existing = ($existingLines -join "`n").TrimEnd()
     }
 
     $blockLines = @($beginMarker)
