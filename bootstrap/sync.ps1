@@ -429,10 +429,26 @@ function Sync-ClaudeCodeMarketplace {
 
 if ($Import) { return }
 
-Sync-CodexSkills -RepoRoot $RepoRoot -CodexSkillsDir $CodexSkillsDir
-Sync-AntigravityPlugins -RepoRoot $RepoRoot -AntigravityPluginsDir $AntigravityPluginsDir
+$vendorCacheDir = Join-Path $RepoRoot ".vendor-cache"
+$stagedDir = Join-Path $vendorCacheDir "_staged"
+$codexConfigPath = Join-Path $env:USERPROFILE ".codex\config.toml"
+
+Sync-CodexSkills -RepoRoot $RepoRoot -CodexSkillsDir $CodexSkillsDir | Out-Null
+Sync-AntigravityPlugins -RepoRoot $RepoRoot -AntigravityPluginsDir $AntigravityPluginsDir | Out-Null
+
+$allFailures = @()
+$allFailures += (Sync-VendorCache -RepoRoot $RepoRoot -VendorCacheDir $vendorCacheDir)
+$allFailures += (Sync-ExternalCodexContent -RepoRoot $RepoRoot -VendorCacheDir $vendorCacheDir -CodexSkillsDir $CodexSkillsDir -CodexConfigPath $codexConfigPath)
+$allFailures += (Sync-ExternalAntigravityContent -RepoRoot $RepoRoot -VendorCacheDir $vendorCacheDir -StagedDir $stagedDir -AntigravityPluginsDir $AntigravityPluginsDir)
+
 if (-not $SkipClaudeCode) {
-    Sync-ClaudeCodeMarketplace -RepoRoot $RepoRoot
+    $allFailures += (Sync-ClaudeCodeMarketplace -RepoRoot $RepoRoot)
+}
+
+if ($allFailures.Count -gt 0) {
+    Write-Output "Sync completed with failures:"
+    $allFailures | ForEach-Object { Write-Output "  - $_" }
+    exit 1
 }
 
 Write-Output "Sync complete."

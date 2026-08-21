@@ -459,10 +459,26 @@ if [ "${1:-}" = "--import" ]; then
   return 0 2>/dev/null || exit 0
 fi
 
-sync_codex_skills "$REPO_ROOT" "$CODEX_SKILLS_DIR"
-sync_antigravity_plugins "$REPO_ROOT" "$ANTIGRAVITY_PLUGINS_DIR"
+VENDOR_CACHE_DIR="$REPO_ROOT/.vendor-cache"
+STAGED_DIR="$VENDOR_CACHE_DIR/_staged"
+CODEX_CONFIG_PATH="$HOME/.codex/config.toml"
+
+overall_failed=0
+
+sync_codex_skills "$REPO_ROOT" "$CODEX_SKILLS_DIR" || overall_failed=1
+sync_antigravity_plugins "$REPO_ROOT" "$ANTIGRAVITY_PLUGINS_DIR" || overall_failed=1
+
+sync_vendor_cache "$REPO_ROOT" "$VENDOR_CACHE_DIR" || overall_failed=1
+sync_external_codex_content "$REPO_ROOT" "$VENDOR_CACHE_DIR" "$CODEX_SKILLS_DIR" "$CODEX_CONFIG_PATH" || overall_failed=1
+sync_external_antigravity_content "$REPO_ROOT" "$VENDOR_CACHE_DIR" "$STAGED_DIR" "$ANTIGRAVITY_PLUGINS_DIR" || overall_failed=1
+
 if [ -z "$SKIP_CLAUDE_CODE" ]; then
-  sync_claude_code_marketplace "$REPO_ROOT"
+  sync_claude_code_marketplace "$REPO_ROOT" || overall_failed=1
+fi
+
+if [ "$overall_failed" -ne 0 ]; then
+  echo "Sync completed with failures (see messages above)." >&2
+  exit 1
 fi
 
 echo "Sync complete."
