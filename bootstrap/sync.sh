@@ -428,6 +428,31 @@ sync_claude_code_marketplace() {
       return 1
     fi
   done
+
+  local failed=0
+  local mp_json name repo plugin_line pname
+  while IFS= read -r mp_json; do
+    [ -n "$mp_json" ] || continue
+    name="$(echo "$mp_json" | jq -r '.name')"
+    repo="$(echo "$mp_json" | jq -r '.repo')"
+
+    if ! claude plugin marketplace add "$repo"; then
+      echo "claude plugin marketplace add '$repo' failed" >&2
+      failed=1
+      continue
+    fi
+
+    while IFS= read -r plugin_line; do
+      pname="$(echo "$plugin_line" | jq -r '.')"
+      [ -n "$pname" ] || continue
+      if ! claude plugin install "$pname@$name"; then
+        echo "claude plugin install '$pname@$name' failed" >&2
+        failed=1
+      fi
+    done < <(echo "$mp_json" | jq -c '.plugins[]')
+  done < <(get_external_marketplaces_json "$repo_root")
+
+  return $failed
 }
 
 if [ "${1:-}" = "--import" ]; then

@@ -391,17 +391,40 @@ function Sync-ExternalAntigravityContent {
 function Sync-ClaudeCodeMarketplace {
     param([string]$RepoRoot)
 
-    & claude plugin marketplace add $RepoRoot
+    # Every native `& claude ...` call below is piped to Out-Null. In
+    # PowerShell, any uncaptured output from a statement inside a function
+    # becomes part of that function's return value once the function is
+    # called via assignment (`$x = Sync-ClaudeCodeMarketplace ...`) — not
+    # just what's passed to `return`. Without suppression, the CLI's own
+    # status lines (printed on every call, including successful no-ops)
+    # would flood $failures and make it permanently non-empty.
+    & claude plugin marketplace add $RepoRoot | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "claude plugin marketplace add '$RepoRoot' failed with exit code $LASTEXITCODE"
     }
 
     foreach ($plugin in (Get-PluginNames -RepoRoot $RepoRoot)) {
-        & claude plugin install "$plugin@agent-extensions"
+        & claude plugin install "$plugin@agent-extensions" | Out-Null
         if ($LASTEXITCODE -ne 0) {
             throw "claude plugin install '$plugin@agent-extensions' failed with exit code $LASTEXITCODE"
         }
     }
+
+    $failures = @()
+    foreach ($mp in (Get-ExternalMarketplaces -RepoRoot $RepoRoot)) {
+        & claude plugin marketplace add $mp.repo | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            $failures += "claude plugin marketplace add '$($mp.repo)' failed with exit code $LASTEXITCODE"
+            continue
+        }
+        foreach ($pluginName in $mp.plugins) {
+            & claude plugin install "$pluginName@$($mp.name)" | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                $failures += "claude plugin install '$pluginName@$($mp.name)' failed with exit code $LASTEXITCODE"
+            }
+        }
+    }
+    return $failures
 }
 
 if ($Import) { return }
