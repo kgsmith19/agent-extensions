@@ -345,6 +345,49 @@ function Sync-AntigravityPlugins {
     return $true
 }
 
+function Sync-ExternalAntigravityContent {
+    param([string]$RepoRoot, [string]$VendorCacheDir, [string]$StagedDir, [string]$AntigravityPluginsDir)
+
+    $marketplaces = Get-ExternalMarketplaces -RepoRoot $RepoRoot
+    $failures = @()
+
+    foreach ($mp in $marketplaces) {
+        foreach ($pluginName in $mp.plugins) {
+            $pluginDir = Join-Path $VendorCacheDir "$($mp.name)\$pluginName"
+            $stagedPluginDir = Join-Path $StagedDir "antigravity\$pluginName"
+
+            try {
+                if (-not (Test-Path $stagedPluginDir)) {
+                    New-Item -ItemType Directory -Path $stagedPluginDir -Force | Out-Null
+                }
+
+                $skillsSource = Join-Path $pluginDir "skills"
+                if (Test-Path $skillsSource) {
+                    $skillsStagedLink = Join-Path $stagedPluginDir "skills"
+                    New-OrRepairJunction -LinkPath $skillsStagedLink -TargetPath $skillsSource
+                }
+
+                $mcpPath = Join-Path $pluginDir ".mcp.json"
+                if (Test-Path $mcpPath) {
+                    $mcpJson = Get-Content $mcpPath -Raw | ConvertFrom-Json
+                    $servers = if ($mcpJson.PSObject.Properties['mcpServers']) { $mcpJson.mcpServers } else { [PSCustomObject]@{} }
+                    $config = ConvertTo-AntigravityMcpConfig -McpServers $servers
+                    if (-not [string]::IsNullOrWhiteSpace($config)) {
+                        Write-AntigravityMcpConfig -PluginStagedDir $stagedPluginDir -JsonContent $config
+                    }
+                }
+
+                $finalLink = Join-Path $AntigravityPluginsDir $pluginName
+                New-OrRepairJunction -LinkPath $finalLink -TargetPath $stagedPluginDir
+            } catch {
+                $failures += "Plugin '$pluginName' (from '$($mp.name)'): $($_.Exception.Message)"
+            }
+        }
+    }
+
+    return $failures
+}
+
 function Sync-ClaudeCodeMarketplace {
     param([string]$RepoRoot)
 

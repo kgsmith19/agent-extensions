@@ -332,6 +332,62 @@ sync_external_codex_content() {
   return $failed
 }
 
+sync_external_antigravity_content() {
+  local repo_root="$1"
+  local vendor_cache_dir="$2"
+  local staged_dir="$3"
+  local antigravity_plugins_dir="$4"
+
+  local failed=0
+  local mp_json name plugin_line plugin plugin_dir staged_plugin_dir
+  local skills_source mcp_path mcp_servers config final_link
+
+  while IFS= read -r mp_json; do
+    [ -n "$mp_json" ] || continue
+    name="$(echo "$mp_json" | jq -r '.name')"
+
+    while IFS= read -r plugin_line; do
+      plugin="$(echo "$plugin_line" | jq -r '.')"
+      [ -n "$plugin" ] || continue
+      plugin_dir="$vendor_cache_dir/$name/$plugin"
+      staged_plugin_dir="$staged_dir/antigravity/$plugin"
+      mkdir -p "$staged_plugin_dir"
+
+      skills_source="$plugin_dir/skills"
+      if [ -d "$skills_source" ]; then
+        if ! new_or_repair_symlink "$staged_plugin_dir/skills" "$skills_source"; then
+          echo "Plugin '$plugin' (from '$name'): failed to link skills into staging" >&2
+          failed=1
+          continue
+        fi
+      fi
+
+      mcp_path="$plugin_dir/.mcp.json"
+      if [ -f "$mcp_path" ]; then
+        if ! mcp_servers="$(jq -c '.mcpServers // {}' "$mcp_path")"; then
+          echo "Plugin '$plugin' (from '$name'): failed to parse '$mcp_path' as JSON" >&2
+          failed=1
+          continue
+        elif config="$(mcp_json_to_antigravity_config "$mcp_servers")"; then
+          write_antigravity_mcp_config "$staged_plugin_dir" "$config"
+        else
+          echo "Plugin '$plugin' (from '$name'): MCP translation to Antigravity config failed" >&2
+          failed=1
+          continue
+        fi
+      fi
+
+      final_link="$antigravity_plugins_dir/$plugin"
+      if ! new_or_repair_symlink "$final_link" "$staged_plugin_dir"; then
+        echo "Plugin '$plugin' (from '$name'): failed to link into Antigravity plugins dir" >&2
+        failed=1
+      fi
+    done < <(echo "$mp_json" | jq -c '.plugins[]')
+  done < <(get_external_marketplaces_json "$repo_root")
+
+  return $failed
+}
+
 sync_antigravity_plugins() {
   local repo_root="$1"
   local antigravity_plugins_dir="$2"
