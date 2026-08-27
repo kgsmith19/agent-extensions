@@ -14,7 +14,9 @@ $codexConfigPath = Join-Path $scratch "codex-config.toml"
 New-Item -ItemType Directory -Path (Join-Path $declareRoot "bootstrap") -Force | Out-Null
 New-Item -ItemType Directory -Path $codexSkillsDir -Force | Out-Null
 
-$sha = New-FixtureMarketplace -DestDir $fixtureRepo
+$repoDir = Join-Path $scratch "plugin-repo"
+$repoSha = New-FixturePluginRepo -DestDir $repoDir
+$sha = New-FixtureMarketplace -DestDir $fixtureRepo -PluginRepoDir $repoDir -PluginRepoSha $repoSha
 $manifest = @{
     marketplaces = @(
         @{ name = "fixture-mp"; repo = $fixtureRepo; pinnedCommit = $sha;

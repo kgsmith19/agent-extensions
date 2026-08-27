@@ -14,7 +14,9 @@ $antigravityPluginsDir = Join-Path $scratch "gemini-plugins"
 New-Item -ItemType Directory -Path (Join-Path $declareRoot "bootstrap") -Force | Out-Null
 New-Item -ItemType Directory -Path $antigravityPluginsDir -Force | Out-Null
 
-$sha = New-FixtureMarketplace -DestDir $fixtureRepo
+$repoDir = Join-Path $scratch "plugin-repo"
+$repoSha = New-FixturePluginRepo -DestDir $repoDir
+$sha = New-FixtureMarketplace -DestDir $fixtureRepo -PluginRepoDir $repoDir -PluginRepoSha $repoSha
 $manifest = @{
     marketplaces = @(
         @{ name = "fixture-mp"; repo = $fixtureRepo; pinnedCommit = $sha;

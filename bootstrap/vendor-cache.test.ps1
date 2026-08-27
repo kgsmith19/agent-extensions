@@ -11,7 +11,9 @@ $declareRoot = Join-Path $scratch "declare-root"
 $vendorCache = Join-Path $scratch "vendor-cache"
 New-Item -ItemType Directory -Path $declareRoot -Force | Out-Null
 
-$sha = New-FixtureMarketplace -DestDir $fixtureRepo
+$repoDir = Join-Path $scratch "plugin-repo"
+$repoSha = New-FixturePluginRepo -DestDir $repoDir
+$sha = New-FixtureMarketplace -DestDir $fixtureRepo -PluginRepoDir $repoDir -PluginRepoSha $repoSha
 
 $manifest = @{
     marketplaces = @(

@@ -16,7 +16,9 @@ CODEX_SKILLS_DIR="$SCRATCH/agents-skills"
 CODEX_CONFIG_PATH="$SCRATCH/codex-config.toml"
 mkdir -p "$DECLARE_ROOT/bootstrap" "$CODEX_SKILLS_DIR"
 
-SHA="$(new_fixture_marketplace "$FIXTURE_REPO")"
+REPO_DIR="$SCRATCH/plugin-repo"
+REPO_SHA="$(new_fixture_plugin_repo "$REPO_DIR")"
+SHA="$(new_fixture_marketplace "$FIXTURE_REPO" "$REPO_DIR" "$REPO_SHA")"
 cat > "$DECLARE_ROOT/bootstrap/external-marketplaces.json" <<EOF
 {
   "marketplaces": [
