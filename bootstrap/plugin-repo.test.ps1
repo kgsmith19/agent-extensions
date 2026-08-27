@@ -10,6 +10,7 @@ New-Item -ItemType Directory -Path $scratch -Force | Out-Null
 try {
     $repoDir = Join-Path $scratch "plugin-repo"
     $repoSha = New-FixturePluginRepo -DestDir $repoDir
+    $repoRef = (& git -C $repoDir symbolic-ref --short HEAD | Out-String).Trim()
     $mpDir = Join-Path $scratch "marketplace"
     New-FixtureMarketplace -DestDir $mpDir -PluginRepoDir $repoDir -PluginRepoSha $repoSha | Out-Null
     $reposDir = Join-Path $scratch "_plugins"
@@ -38,6 +39,19 @@ try {
     $r2 = Sync-PluginRepo -PluginReposDir $reposDir -MarketplaceName "fx" -PluginName "zeta-repo-pinned" -Source (Get-PluginSource -MarketplaceDir $mpDir -PluginName "zeta-repo-pinned") -PinnedCommit ""
     if ($r2.Error -ne "")             { $failures += "zeta rerun: unexpected error '$($r2.Error)'" }
     if ($r2.ResolvedSha -ne $repoSha) { $failures += "zeta rerun: sha changed" }
+
+    # ref-based source is idempotent when the clone already sits at the ref's commit
+    $refSrc = [PSCustomObject]@{ Kind = "repo"; Path = ""; Url = $src.Url; Sha = ""; Ref = $repoRef; SubPath = ""; Error = "" }
+    $refPlugin = "theta-repo-ref"
+    $ref1 = Sync-PluginRepo -PluginReposDir $reposDir -MarketplaceName "fx" -PluginName $refPlugin -Source $refSrc -PinnedCommit ""
+    if ($ref1.Error -ne "")                { $failures += "theta ref: unexpected error '$($ref1.Error)'" }
+    if ($ref1.ResolvedSha -ne $repoSha)    { $failures += "theta ref: expected ref sha '$repoSha', got '$($ref1.ResolvedSha)'" }
+    $sentinel = Join-Path $ref1.Dir "sentinel.txt"
+    Set-Content -Path $sentinel -Value "keep"
+    $ref2 = Sync-PluginRepo -PluginReposDir $reposDir -MarketplaceName "fx" -PluginName $refPlugin -Source $refSrc -PinnedCommit ""
+    if ($ref2.Error -ne "")                { $failures += "theta ref rerun: unexpected error '$($ref2.Error)'" }
+    if ($ref2.ResolvedSha -ne $repoSha)    { $failures += "theta ref rerun: sha changed" }
+    if (-not (Test-Path $sentinel))        { $failures += "theta ref rerun: expected existing clone to remain in place" }
 
     # PinnedCommit wins over the manifest sha
     $r3 = Sync-PluginRepo -PluginReposDir $reposDir -MarketplaceName "fx" -PluginName "theta-repo-unpinned" -Source $src -PinnedCommit $repoSha

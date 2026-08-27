@@ -198,9 +198,18 @@ function Sync-PluginRepo {
     }
 
     $wanted = ""
-    if (-not [string]::IsNullOrWhiteSpace($PinnedCommit)) { $wanted = $PinnedCommit }
-    elseif (-not [string]::IsNullOrWhiteSpace($Source.Sha)) { $wanted = [string]$Source.Sha }
-    elseif (-not [string]::IsNullOrWhiteSpace($Source.Ref)) { $wanted = [string]$Source.Ref }
+    $wantedCommit = ""
+    $wantedRef = ""
+    if (-not [string]::IsNullOrWhiteSpace($PinnedCommit)) {
+        $wanted = $PinnedCommit
+        $wantedCommit = $PinnedCommit
+    } elseif (-not [string]::IsNullOrWhiteSpace($Source.Sha)) {
+        $wanted = [string]$Source.Sha
+        $wantedCommit = [string]$Source.Sha
+    } elseif (-not [string]::IsNullOrWhiteSpace($Source.Ref)) {
+        $wanted = [string]$Source.Ref
+        $wantedRef = [string]$Source.Ref
+    }
 
     $clone = Join-Path $PluginReposDir "$MarketplaceName\$PluginName"
     $current = ""
@@ -208,13 +217,18 @@ function Sync-PluginRepo {
         Push-Location $clone
         try {
             $current = (& git rev-parse HEAD 2>$null | Out-String).Trim()
+            if ($wantedRef -ne "") {
+                $wantedCommit = (& git ls-remote --refs --tags --heads origin $wantedRef 2>$null | ForEach-Object {
+                    if ($_ -match '^([0-9a-fA-F]{40})\s') { $matches[1] }
+                } | Select-Object -First 1 | Out-String).Trim()
+            }
         } finally {
             Pop-Location
         }
     }
 
     $needsFetch = $true
-    if ($current -ne "" -and $wanted -ne "" -and $current -eq $wanted) {
+    if ($current -ne "" -and $wantedCommit -ne "" -and $current -eq $wantedCommit) {
         $needsFetch = $false
     }
 

@@ -158,23 +158,25 @@ plugin_repo_result() {
 
 sync_plugin_repo() {
   local plugin_repos_dir="$1" marketplace_name="$2" plugin_name="$3" source_json="$4" pinned_commit="$5"
-  local url sha ref subpath wanted clone current fetch_target resolved dir
-
-  url="$(echo "$source_json" | jq -r '.url // ""')"
-  sha="$(echo "$source_json" | jq -r '.sha // ""')"
-  ref="$(echo "$source_json" | jq -r '.ref // ""')"
-  subpath="$(echo "$source_json" | jq -r '.subpath // ""')"
+  local url sha ref subpath kind source_error wanted wanted_commit wanted_ref clone current fetch_target resolved dir
 
   if [ "$source_json" = "null" ] || [ -z "$source_json" ]; then
     plugin_repo_result "" "" "plugin '$plugin_name' (from '$marketplace_name'): external source metadata is missing"
     return 0
   fi
-  if [ "$(echo "$source_json" | jq -r '.error // ""')" != "" ]; then
-    plugin_repo_result "" "" "plugin '$plugin_name' (from '$marketplace_name'): $(echo "$source_json" | jq -r '.error // ""')"
+  url="$(echo "$source_json" | jq -r '.url // ""')"
+  sha="$(echo "$source_json" | jq -r '.sha // ""')"
+  ref="$(echo "$source_json" | jq -r '.ref // ""')"
+  subpath="$(echo "$source_json" | jq -r '.subpath // ""')"
+  source_error="$(echo "$source_json" | jq -r '.error // ""')"
+  kind="$(echo "$source_json" | jq -r '.kind // ""')"
+
+  if [ "$source_error" != "" ]; then
+    plugin_repo_result "" "" "plugin '$plugin_name' (from '$marketplace_name'): $source_error"
     return 0
   fi
-  if [ "$(echo "$source_json" | jq -r '.kind // ""')" != "repo" ]; then
-    plugin_repo_result "" "" "plugin '$plugin_name' (from '$marketplace_name'): source kind '$(echo "$source_json" | jq -r '.kind // ""')' is not an external repo"
+  if [ "$kind" != "repo" ]; then
+    plugin_repo_result "" "" "plugin '$plugin_name' (from '$marketplace_name'): source kind '$kind' is not an external repo"
     return 0
   fi
   if [ -z "$url" ]; then
@@ -183,21 +185,29 @@ sync_plugin_repo() {
   fi
 
   wanted=""
+  wanted_commit=""
+  wanted_ref=""
   if [ -n "$pinned_commit" ]; then
     wanted="$pinned_commit"
+    wanted_commit="$pinned_commit"
   elif [ -n "$sha" ]; then
     wanted="$sha"
+    wanted_commit="$sha"
   elif [ -n "$ref" ]; then
     wanted="$ref"
+    wanted_ref="$ref"
   fi
 
   clone="$plugin_repos_dir/$marketplace_name/$plugin_name"
   current=""
   if [ -d "$clone/.git" ]; then
     current="$(cd "$clone" && git rev-parse HEAD 2>/dev/null || true)"
+    if [ -n "$wanted_ref" ]; then
+      wanted_commit="$(cd "$clone" && git ls-remote --refs --tags --heads origin "$wanted_ref" 2>/dev/null | awk 'NR==1 {print $1}')"
+    fi
   fi
 
-  if [ -z "$current" ] || [ -z "$wanted" ] || [ "$current" != "$wanted" ]; then
+  if [ -z "$current" ] || [ -z "$wanted_commit" ] || [ "$current" != "$wanted_commit" ]; then
     rm -rf "$clone"
     if ! mkdir -p "$clone"; then
       plugin_repo_result "" "" "plugin '$plugin_name' (from '$marketplace_name'): could not create '$clone'"
