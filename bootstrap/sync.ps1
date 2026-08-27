@@ -170,6 +170,107 @@ function Sync-VendorCache {
     return $failures
 }
 
+function Sync-PluginRepo {
+    param(
+        [string]$PluginReposDir,
+        [string]$MarketplaceName,
+        [string]$PluginName,
+        $Source,
+        [string]$PinnedCommit
+    )
+
+    $fail = {
+        param([string]$Message)
+        [PSCustomObject]@{ Dir = ""; ResolvedSha = ""; Error = $Message }
+    }
+
+    if ($null -eq $Source) {
+        return & $fail "plugin '$PluginName' (from '$MarketplaceName'): external source metadata is missing"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Source.Error)) {
+        return & $fail "plugin '$PluginName' (from '$MarketplaceName'): $($Source.Error)"
+    }
+    if ($Source.Kind -ne "repo") {
+        return & $fail "plugin '$PluginName' (from '$MarketplaceName'): source kind '$($Source.Kind)' is not an external repo"
+    }
+    if ([string]::IsNullOrWhiteSpace($Source.Url)) {
+        return & $fail "plugin '$PluginName' (from '$MarketplaceName'): external source declares no url"
+    }
+
+    $wanted = ""
+    if (-not [string]::IsNullOrWhiteSpace($PinnedCommit)) { $wanted = $PinnedCommit }
+    elseif (-not [string]::IsNullOrWhiteSpace($Source.Sha)) { $wanted = [string]$Source.Sha }
+    elseif (-not [string]::IsNullOrWhiteSpace($Source.Ref)) { $wanted = [string]$Source.Ref }
+
+    $clone = Join-Path $PluginReposDir "$MarketplaceName\$PluginName"
+    $current = ""
+    if (Test-Path (Join-Path $clone ".git")) {
+        Push-Location $clone
+        try {
+            $current = (& git rev-parse HEAD 2>$null | Out-String).Trim()
+        } finally {
+            Pop-Location
+        }
+    }
+
+    $needsFetch = $true
+    if ($current -ne "" -and $wanted -ne "" -and $current -eq $wanted) {
+        $needsFetch = $false
+    }
+
+    if ($needsFetch) {
+        if (Test-Path $clone) {
+            try {
+                Remove-Item $clone -Recurse -Force
+            } catch {
+                return & $fail "plugin '$PluginName' (from '$MarketplaceName'): could not clear '$clone' — $($_.Exception.Message)"
+            }
+        }
+        try {
+            New-Item -ItemType Directory -Path $clone -Force | Out-Null
+        } catch {
+            return & $fail "plugin '$PluginName' (from '$MarketplaceName'): could not create '$clone' — $($_.Exception.Message)"
+        }
+
+        $fetchTarget = if ($wanted -ne "") { $wanted } else { "HEAD" }
+        Push-Location $clone
+        try {
+            & git init -q 2>&1 | Out-Null
+            & git remote add origin $Source.Url 2>&1 | Out-Null
+            & git fetch --depth 1 origin $fetchTarget 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                return & $fail "plugin '$PluginName' (from '$MarketplaceName'): could not fetch '$fetchTarget' from '$($Source.Url)'"
+            }
+            & git checkout -q FETCH_HEAD 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                return & $fail "plugin '$PluginName' (from '$MarketplaceName'): could not check out '$fetchTarget'"
+            }
+        } finally {
+            Pop-Location
+        }
+    }
+
+    Push-Location $clone
+    try {
+        $resolved = (& git rev-parse HEAD 2>$null | Out-String).Trim()
+    } finally {
+        Pop-Location
+    }
+    if ([string]::IsNullOrWhiteSpace($resolved)) {
+        return & $fail "plugin '$PluginName' (from '$MarketplaceName'): clone at '$clone' has no resolvable HEAD"
+    }
+
+    $dir = $clone
+    if (-not [string]::IsNullOrWhiteSpace($Source.SubPath)) {
+        $dir = Join-Path $clone ($Source.SubPath -replace '/', '\')
+        if (-not (Test-Path $dir)) {
+            return & $fail "plugin '$PluginName' (from '$MarketplaceName'): declared subdirectory '$($Source.SubPath)' does not exist in the clone"
+        }
+    }
+
+    return [PSCustomObject]@{ Dir = $dir; ResolvedSha = $resolved; Error = "" }
+}
+
 function ConvertTo-TomlString {
     param([string]$Value)
     $escaped = $Value -replace '\\', '\\' -replace '"', '\"'

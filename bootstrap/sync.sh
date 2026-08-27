@@ -152,6 +152,93 @@ sync_vendor_cache() {
   return $failed
 }
 
+plugin_repo_result() {
+  jq -n --arg d "$1" --arg s "$2" --arg e "$3" '{dir:$d,resolvedSha:$s,error:$e}'
+}
+
+sync_plugin_repo() {
+  local plugin_repos_dir="$1" marketplace_name="$2" plugin_name="$3" source_json="$4" pinned_commit="$5"
+  local url sha ref subpath wanted clone current fetch_target resolved dir
+
+  url="$(echo "$source_json" | jq -r '.url // ""')"
+  sha="$(echo "$source_json" | jq -r '.sha // ""')"
+  ref="$(echo "$source_json" | jq -r '.ref // ""')"
+  subpath="$(echo "$source_json" | jq -r '.subpath // ""')"
+
+  if [ "$source_json" = "null" ] || [ -z "$source_json" ]; then
+    plugin_repo_result "" "" "plugin '$plugin_name' (from '$marketplace_name'): external source metadata is missing"
+    return 0
+  fi
+  if [ "$(echo "$source_json" | jq -r '.error // ""')" != "" ]; then
+    plugin_repo_result "" "" "plugin '$plugin_name' (from '$marketplace_name'): $(echo "$source_json" | jq -r '.error // ""')"
+    return 0
+  fi
+  if [ "$(echo "$source_json" | jq -r '.kind // ""')" != "repo" ]; then
+    plugin_repo_result "" "" "plugin '$plugin_name' (from '$marketplace_name'): source kind '$(echo "$source_json" | jq -r '.kind // ""')' is not an external repo"
+    return 0
+  fi
+  if [ -z "$url" ]; then
+    plugin_repo_result "" "" "plugin '$plugin_name' (from '$marketplace_name'): external source declares no url"
+    return 0
+  fi
+
+  wanted=""
+  if [ -n "$pinned_commit" ]; then
+    wanted="$pinned_commit"
+  elif [ -n "$sha" ]; then
+    wanted="$sha"
+  elif [ -n "$ref" ]; then
+    wanted="$ref"
+  fi
+
+  clone="$plugin_repos_dir/$marketplace_name/$plugin_name"
+  current=""
+  if [ -d "$clone/.git" ]; then
+    current="$(cd "$clone" && git rev-parse HEAD 2>/dev/null || true)"
+  fi
+
+  if [ -z "$current" ] || [ -z "$wanted" ] || [ "$current" != "$wanted" ]; then
+    rm -rf "$clone"
+    if ! mkdir -p "$clone"; then
+      plugin_repo_result "" "" "plugin '$plugin_name' (from '$marketplace_name'): could not create '$clone'"
+      return 0
+    fi
+
+    fetch_target="$wanted"
+    if [ -z "$fetch_target" ]; then
+      fetch_target="HEAD"
+    fi
+
+    if ! (
+      cd "$clone" \
+      && git init -q \
+      && git remote add origin "$url" \
+      && git fetch --depth 1 origin "$fetch_target" >/dev/null 2>&1 \
+      && git checkout -q FETCH_HEAD
+    ); then
+      plugin_repo_result "" "" "plugin '$plugin_name' (from '$marketplace_name'): could not fetch '$fetch_target' from '$url'"
+      return 0
+    fi
+  fi
+
+  resolved="$(cd "$clone" && git rev-parse HEAD 2>/dev/null || true)"
+  if [ -z "$resolved" ]; then
+    plugin_repo_result "" "" "plugin '$plugin_name' (from '$marketplace_name'): clone at '$clone' has no resolvable HEAD"
+    return 0
+  fi
+
+  dir="$clone"
+  if [ -n "$subpath" ]; then
+    dir="$clone/$subpath"
+    if [ ! -d "$dir" ]; then
+      plugin_repo_result "" "" "plugin '$plugin_name' (from '$marketplace_name'): declared subdirectory '$subpath' does not exist in the clone"
+      return 0
+    fi
+  fi
+
+  plugin_repo_result "$dir" "$resolved" ""
+}
+
 mcp_json_to_codex_toml() {
   local mcp_servers_json="$1"
 
