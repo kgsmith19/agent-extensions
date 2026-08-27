@@ -23,7 +23,7 @@ cat > "$DECLARE_ROOT/bootstrap/external-marketplaces.json" <<EOF
 {
   "marketplaces": [
     { "name": "fixture-mp", "repo": "$FIXTURE_REPO", "pinnedCommit": "$SHA",
-      "plugins": ["alpha-skills", "beta-mcp-stdio", "gamma-mcp-http", "epsilon-invalid-json", "delta-malformed"] }
+      "plugins": ["alpha-skills", "beta-mcp-stdio", "gamma-mcp-http", "epsilon-invalid-json", "delta-malformed", "zeta-repo-pinned", "eta-repo-subpath", "omega-absent"] }
   ]
 }
 EOF
@@ -50,8 +50,17 @@ if ! grep -q "epsilon-invalid-json" "$STDERR_CAPTURE"; then
   failures+=("Expected a reported failure mentioning epsilon-invalid-json (invalid JSON) on stderr")
 fi
 
-if [ ! -L "$CODEX_SKILLS_DIR/greet" ]; then
-  failures+=("alpha-skills: 'greet' skill was not linked (or is not a live link) despite delta-malformed's failure")
+if [ ! -f "$CODEX_SKILLS_DIR/greet/SKILL.md" ]; then
+  failures+=("alpha-skills: 'greet' skill was not reachable despite delta-malformed's failure")
+fi
+if [ ! -e "$CODEX_SKILLS_DIR/remote-greet" ]; then
+  failures+=("zeta-repo-pinned's 'remote-greet' skill was not linked from its external repo")
+fi
+if [ ! -e "$CODEX_SKILLS_DIR/eta-greet" ]; then
+  failures+=("eta-repo-subpath's 'eta-greet' skill was not linked from its repo subdirectory")
+fi
+if ! grep -q "omega-absent" "$STDERR_CAPTURE"; then
+  failures+=("omega-absent is declared but not in the manifest; it must be reported as a failure")
 fi
 
 CONFIG_CONTENT=""

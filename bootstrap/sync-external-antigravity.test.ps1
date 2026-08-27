@@ -20,7 +20,7 @@ $sha = New-FixtureMarketplace -DestDir $fixtureRepo -PluginRepoDir $repoDir -Plu
 $manifest = @{
     marketplaces = @(
         @{ name = "fixture-mp"; repo = $fixtureRepo; pinnedCommit = $sha;
-           plugins = @("alpha-skills", "beta-mcp-stdio", "gamma-mcp-http", "epsilon-invalid-json", "delta-malformed") }
+           plugins = @("alpha-skills", "beta-mcp-stdio", "gamma-mcp-http", "epsilon-invalid-json", "delta-malformed", "zeta-repo-pinned", "eta-repo-subpath", "omega-absent") }
     )
 } | ConvertTo-Json -Depth 10
 Set-Content -Path (Join-Path $declareRoot "bootstrap\external-marketplaces.json") -Value $manifest
@@ -50,6 +50,19 @@ if (-not $alphaItem -or -not $alphaItem.LinkType) {
 }
 if (-not (Test-Path (Join-Path $alphaLink "skills\greet\SKILL.md"))) {
     $failures += "alpha-skills' skill is not reachable through the Antigravity link"
+}
+$zetaLink = Join-Path $antigravityPluginsDir "zeta-repo-pinned"
+if (-not (Test-Path (Join-Path $zetaLink "skills\remote-greet\SKILL.md"))) {
+    $failures += "zeta-repo-pinned's 'remote-greet' skill was not staged from its external repo"
+}
+$etaLink = Join-Path $antigravityPluginsDir "eta-repo-subpath"
+if (-not (Test-Path (Join-Path $etaLink "skills\eta-greet\SKILL.md"))) {
+    $failures += "eta-repo-subpath's 'eta-greet' skill was not staged from its repo subdirectory"
+}
+
+$omegaReported = @($reported) | Where-Object { $_ -match "omega-absent" }
+if (-not $omegaReported) {
+    $failures += "omega-absent is declared but not in the manifest; it must be reported as a failure"
 }
 
 # --- beta-mcp-stdio: linked, has generated mcp_config.json ---

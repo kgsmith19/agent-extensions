@@ -331,6 +331,45 @@ function Save-ResolvedCommit {
     return ""
 }
 
+function Resolve-PluginDir {
+    param([string]$RepoRoot, [string]$VendorCacheDir, $Marketplace, $DeclaredPlugin)
+
+    $name = $DeclaredPlugin.Name
+    $marketplaceDir = Join-Path $VendorCacheDir $Marketplace.name
+    $src = Get-PluginSource -MarketplaceDir $marketplaceDir -PluginName $name
+
+    if ($src.Kind -eq "missing") {
+        return [PSCustomObject]@{ Dir = ""; Failure = "Plugin '$name' (from '$($Marketplace.name)'): $($src.Error)" }
+    }
+
+    if ($src.Kind -eq "inline") {
+        $rel = $src.Path -replace '^\./','' -replace '/','\'
+        $dir = Join-Path $marketplaceDir $rel
+        if (-not (Test-Path $dir)) {
+            return [PSCustomObject]@{ Dir = ""; Failure = "Plugin '$name' (from '$($Marketplace.name)'): declared inline path '$($src.Path)' does not exist in the marketplace clone" }
+        }
+        return [PSCustomObject]@{ Dir = $dir; Failure = "" }
+    }
+
+    $pluginReposDir = Join-Path $VendorCacheDir "_plugins"
+    $r = Sync-PluginRepo -PluginReposDir $pluginReposDir -MarketplaceName $Marketplace.name `
+        -PluginName $name -Source $src -PinnedCommit $DeclaredPlugin.ResolvedCommit
+    if ($r.Error -ne "") {
+        return [PSCustomObject]@{ Dir = ""; Failure = $r.Error }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($src.Sha) -and [string]::IsNullOrWhiteSpace($src.Ref) `
+        -and [string]::IsNullOrWhiteSpace($DeclaredPlugin.ResolvedCommit)) {
+        $saveErr = Save-ResolvedCommit -RepoRoot $RepoRoot -MarketplaceName $Marketplace.name -PluginName $name -Sha $r.ResolvedSha
+        if ($saveErr -ne "") {
+            return [PSCustomObject]@{ Dir = ""; Failure = $saveErr }
+        }
+        Write-Host "Pinned '$name' (from '$($Marketplace.name)') to $($r.ResolvedSha)"
+    }
+
+    return [PSCustomObject]@{ Dir = $r.Dir; Failure = "" }
+}
+
 function ConvertTo-TomlString {
     param([string]$Value)
     $escaped = $Value -replace '\\', '\\' -replace '"', '\"'
@@ -512,8 +551,11 @@ function Sync-ExternalCodexContent {
     $tomlByPlugin = @{}
 
     foreach ($mp in $marketplaces) {
-        foreach ($pluginName in $mp.plugins) {
-            $pluginDir = Join-Path $VendorCacheDir "$($mp.name)\$pluginName"
+        foreach ($declared in (Get-DeclaredPlugins -Marketplace $mp)) {
+            $pluginName = $declared.Name
+            $resolved = Resolve-PluginDir -RepoRoot $RepoRoot -VendorCacheDir $VendorCacheDir -Marketplace $mp -DeclaredPlugin $declared
+            if ($resolved.Failure -ne "") { $failures += $resolved.Failure; continue }
+            $pluginDir = $resolved.Dir
 
             $skillsRoot = Join-Path $pluginDir "skills"
             if (Test-Path $skillsRoot) {
@@ -577,8 +619,11 @@ function Sync-ExternalAntigravityContent {
     $failures = @()
 
     foreach ($mp in $marketplaces) {
-        foreach ($pluginName in $mp.plugins) {
-            $pluginDir = Join-Path $VendorCacheDir "$($mp.name)\$pluginName"
+        foreach ($declared in (Get-DeclaredPlugins -Marketplace $mp)) {
+            $pluginName = $declared.Name
+            $resolved = Resolve-PluginDir -RepoRoot $RepoRoot -VendorCacheDir $VendorCacheDir -Marketplace $mp -DeclaredPlugin $declared
+            if ($resolved.Failure -ne "") { $failures += $resolved.Failure; continue }
+            $pluginDir = $resolved.Dir
             $stagedPluginDir = Join-Path $StagedDir "antigravity\$pluginName"
 
             try {

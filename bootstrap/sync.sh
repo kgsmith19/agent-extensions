@@ -32,10 +32,15 @@ new_or_repair_symlink() {
     rm "$link_path"
   fi
 
-  if ! ln -s "$target_path" "$link_path" || [ ! -L "$link_path" ]; then
+  if ! ln -s "$target_path" "$link_path"; then
     echo "Failed to create symlink '$link_path' -> '$target_path'" >&2
     return 1
   fi
+  if [ -L "$link_path" ] || [ -e "$link_path" ]; then
+    return 0
+  fi
+  echo "Failed to create symlink '$link_path' -> '$target_path'" >&2
+  return 1
 }
 
 get_external_marketplaces_json() {
@@ -301,6 +306,63 @@ save_resolved_commit() {
   fi
 }
 
+resolve_plugin_dir() {
+  local repo_root="$1" vendor_cache_dir="$2" mp_json="$3" declared_plugin_json="$4"
+  local name marketplace_name marketplace_dir src_json src_kind src_error src_path plugin_repos_dir result_json
+  local dir pinned_commit resolved_sha save_err
+
+  name="$(echo "$declared_plugin_json" | jq -r '.name // ""')"
+  marketplace_name="$(echo "$mp_json" | jq -r '.name')"
+  marketplace_dir="$vendor_cache_dir/$marketplace_name"
+  src_json="$(get_plugin_source "$marketplace_dir" "$name")"
+  src_kind="$(echo "$src_json" | jq -r '.kind // ""')"
+  src_error="$(echo "$src_json" | jq -r '.error // ""')"
+
+  if [ "$src_kind" = "missing" ]; then
+    jq -n --arg failure "Plugin '$name' (from '$marketplace_name'): $src_error" '{dir:"",failure:$failure}'
+    return 0
+  fi
+
+  if [ "$src_kind" = "inline" ]; then
+    src_path="$(echo "$src_json" | jq -r '.path // ""')"
+    dir="$marketplace_dir/${src_path#./}"
+    if command -v cygpath >/dev/null 2>&1; then
+      dir="$(cygpath -u "$dir" 2>/dev/null || printf '%s' "$dir")"
+    fi
+    if [ ! -d "$dir" ]; then
+      jq -n --arg failure "Plugin '$name' (from '$marketplace_name'): declared inline path '$src_path' does not exist in the marketplace clone" '{dir:"",failure:$failure}'
+      return 0
+    fi
+    printf '%s' "$dir" | jq -Rs '{dir: ., failure: ""}'
+    return 0
+  fi
+
+  plugin_repos_dir="$vendor_cache_dir/_plugins"
+  pinned_commit="$(echo "$declared_plugin_json" | jq -r '.resolvedCommit // ""')"
+  result_json="$(sync_plugin_repo "$plugin_repos_dir" "$marketplace_name" "$name" "$src_json" "$pinned_commit")"
+  if [ "$(echo "$result_json" | jq -r '.error // ""')" != "" ]; then
+    echo "$result_json" | jq -c '{dir:"",failure:.error}'
+    return 0
+  fi
+  dir="$(echo "$result_json" | jq -r '.dir // ""')"
+  if command -v cygpath >/dev/null 2>&1; then
+    dir="$(cygpath -u "$dir" 2>/dev/null || printf '%s' "$dir")"
+  fi
+
+  if [ "$(echo "$src_json" | jq -r '.sha // ""')" = "" ] \
+    && [ "$(echo "$src_json" | jq -r '.ref // ""')" = "" ] \
+    && [ -z "$pinned_commit" ]; then
+    resolved_sha="$(echo "$result_json" | jq -r '.resolvedSha // ""')"
+    if ! save_err="$(save_resolved_commit "$repo_root" "$marketplace_name" "$name" "$resolved_sha" 2>&1)"; then
+      jq -n --arg failure "$save_err" '{dir:"",failure:$failure}'
+      return 0
+    fi
+    echo "Pinned '$name' (from '$marketplace_name') to $resolved_sha" >&2
+  fi
+
+  printf '%s' "$dir" | jq -Rs '{dir: ., failure: ""}'
+}
+
 mcp_json_to_codex_toml() {
   local mcp_servers_json="$1"
 
@@ -470,16 +532,23 @@ sync_external_codex_content() {
 
   local failed=0
   local merge_args=()
-  local mp_json name plugin_line plugin plugin_dir skills_root mcp_path mcp_servers toml
+  local mp_json name plugin_line plugin resolved_json resolve_failure plugin_dir skills_root mcp_path mcp_servers toml
 
   while IFS= read -r mp_json; do
     [ -n "$mp_json" ] || continue
     name="$(echo "$mp_json" | jq -r '.name')"
 
     while IFS= read -r plugin_line; do
-      plugin="$(echo "$plugin_line" | jq -r '.')"
+      plugin="$(echo "$plugin_line" | jq -r '.name')"
       [ -n "$plugin" ] || continue
-      plugin_dir="$vendor_cache_dir/$name/$plugin"
+      resolved_json="$(resolve_plugin_dir "$repo_root" "$vendor_cache_dir" "$mp_json" "$plugin_line")"
+      resolve_failure="$(echo "$resolved_json" | jq -r '.failure')"
+      if [ -n "$resolve_failure" ]; then
+        echo "$resolve_failure" >&2
+        failed=1
+        continue
+      fi
+      plugin_dir="$(echo "$resolved_json" | jq -r '.dir')"
 
       skills_root="$plugin_dir/skills"
       if [ -d "$skills_root" ]; then
@@ -508,7 +577,7 @@ sync_external_codex_content() {
           failed=1
         fi
       fi
-    done < <(echo "$mp_json" | jq -c '.plugins[]')
+    done < <(get_declared_plugins "$mp_json")
   done < <(get_external_marketplaces_json "$repo_root")
 
   if [ ${#merge_args[@]} -gt 0 ]; then
@@ -528,7 +597,7 @@ sync_external_antigravity_content() {
   local antigravity_plugins_dir="$4"
 
   local failed=0
-  local mp_json name plugin_line plugin plugin_dir staged_plugin_dir
+  local mp_json name plugin_line plugin resolved_json resolve_failure plugin_dir staged_plugin_dir
   local skills_source mcp_path mcp_servers config final_link
 
   while IFS= read -r mp_json; do
@@ -536,9 +605,16 @@ sync_external_antigravity_content() {
     name="$(echo "$mp_json" | jq -r '.name')"
 
     while IFS= read -r plugin_line; do
-      plugin="$(echo "$plugin_line" | jq -r '.')"
+      plugin="$(echo "$plugin_line" | jq -r '.name')"
       [ -n "$plugin" ] || continue
-      plugin_dir="$vendor_cache_dir/$name/$plugin"
+      resolved_json="$(resolve_plugin_dir "$repo_root" "$vendor_cache_dir" "$mp_json" "$plugin_line")"
+      resolve_failure="$(echo "$resolved_json" | jq -r '.failure')"
+      if [ -n "$resolve_failure" ]; then
+        echo "$resolve_failure" >&2
+        failed=1
+        continue
+      fi
+      plugin_dir="$(echo "$resolved_json" | jq -r '.dir')"
       staged_plugin_dir="$staged_dir/antigravity/$plugin"
       mkdir -p "$staged_plugin_dir"
 
@@ -571,7 +647,7 @@ sync_external_antigravity_content() {
         echo "Plugin '$plugin' (from '$name'): failed to link into Antigravity plugins dir" >&2
         failed=1
       fi
-    done < <(echo "$mp_json" | jq -c '.plugins[]')
+    done < <(get_declared_plugins "$mp_json")
   done < <(get_external_marketplaces_json "$repo_root")
 
   return $failed

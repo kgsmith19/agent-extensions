@@ -23,7 +23,7 @@ cat > "$DECLARE_ROOT/bootstrap/external-marketplaces.json" <<EOF
 {
   "marketplaces": [
     { "name": "fixture-mp", "repo": "$FIXTURE_REPO", "pinnedCommit": "$SHA",
-      "plugins": ["alpha-skills", "beta-mcp-stdio", "gamma-mcp-http", "epsilon-invalid-json", "delta-malformed"] }
+      "plugins": ["alpha-skills", "beta-mcp-stdio", "gamma-mcp-http", "epsilon-invalid-json", "delta-malformed", "zeta-repo-pinned", "eta-repo-subpath", "omega-absent"] }
   ]
 }
 EOF
@@ -49,11 +49,20 @@ if ! grep -q "epsilon-invalid-json" "$STDERR_CAPTURE"; then
   failures+=("Expected a reported failure mentioning epsilon-invalid-json (invalid JSON) on stderr")
 fi
 
-if [ ! -L "$ANTIGRAVITY_DIR/alpha-skills" ]; then
-  failures+=("alpha-skills was not linked into the Antigravity plugins dir")
+if [ ! -d "$ANTIGRAVITY_DIR/alpha-skills" ]; then
+  failures+=("alpha-skills was not staged into the Antigravity plugins dir")
 fi
 if [ ! -f "$ANTIGRAVITY_DIR/alpha-skills/skills/greet/SKILL.md" ]; then
   failures+=("alpha-skills' skill is not reachable through the Antigravity link")
+fi
+if [ ! -f "$ANTIGRAVITY_DIR/zeta-repo-pinned/skills/remote-greet/SKILL.md" ]; then
+  failures+=("zeta-repo-pinned's 'remote-greet' skill was not staged from its external repo")
+fi
+if [ ! -f "$ANTIGRAVITY_DIR/eta-repo-subpath/skills/eta-greet/SKILL.md" ]; then
+  failures+=("eta-repo-subpath's 'eta-greet' skill was not staged from its repo subdirectory")
+fi
+if ! grep -q "omega-absent" "$STDERR_CAPTURE"; then
+  failures+=("omega-absent is declared but not in the manifest; it must be reported as a failure")
 fi
 
 BETA_CONFIG="$ANTIGRAVITY_DIR/beta-mcp-stdio/mcp_config.json"
