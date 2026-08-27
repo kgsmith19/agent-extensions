@@ -60,7 +60,7 @@ resolve_marketplace_url() {
 
 get_declared_plugins() {
   local mp_json="$1"
-  echo "$mp_json" | jq -c '.plugins[]? | if type == "string" then {name: ., resolvedCommit: ""} else {name: .name, resolvedCommit: (.resolvedCommit // "")} end'
+  printf '%s\n' "$mp_json" | jq -c '.plugins[]? | if type == "string" then {name: ., resolvedCommit: ""} else {name: .name, resolvedCommit: (.resolvedCommit // "")} end' 2>/dev/null || true
 }
 
 plugin_source_missing() {
