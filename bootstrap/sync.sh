@@ -249,6 +249,58 @@ sync_plugin_repo() {
   plugin_repo_result "$dir" "$resolved" ""
 }
 
+save_resolved_commit() {
+  local repo_root="$1" marketplace_name="$2" plugin_name="$3" sha="$4"
+  local path="$repo_root/bootstrap/external-marketplaces.json"
+  local tmp
+
+  if [ ! -f "$path" ]; then
+    echo "cannot record resolved commit: '$path' does not exist" >&2
+    return 1
+  fi
+
+  if ! jq -e . "$path" >/dev/null 2>&1; then
+    echo "cannot record resolved commit: could not parse '$path'" >&2
+    return 1
+  fi
+
+  if ! jq -e --arg m "$marketplace_name" '.marketplaces[] | select(.name == $m)' "$path" >/dev/null 2>&1; then
+    echo "cannot record resolved commit: marketplace '$marketplace_name' is not declared in '$path'" >&2
+    return 1
+  fi
+
+  if ! jq -e --arg m "$marketplace_name" --arg p "$plugin_name" \
+    '.marketplaces[] | select(.name == $m) | .plugins[] | select((if type == "string" then . else .name end) == $p)' \
+    "$path" >/dev/null 2>&1; then
+    echo "cannot record resolved commit: plugin '$plugin_name' is not declared under marketplace '$marketplace_name'" >&2
+    return 1
+  fi
+
+  tmp="$(mktemp)"
+  if ! jq --arg m "$marketplace_name" --arg p "$plugin_name" --arg s "$sha" '
+    .marketplaces |= map(
+      if .name == $m then
+        .plugins |= map(
+          if (if type == "string" then . else .name end) == $p
+          then {name: $p, resolvedCommit: $s}
+          else .
+          end
+        )
+      else .
+      end
+    )' "$path" > "$tmp"; then
+    rm -f "$tmp"
+    echo "cannot record resolved commit: failed to rewrite '$path'" >&2
+    return 1
+  fi
+
+  if ! mv "$tmp" "$path"; then
+    rm -f "$tmp"
+    echo "cannot record resolved commit: failed to rewrite '$path'" >&2
+    return 1
+  fi
+}
+
 mcp_json_to_codex_toml() {
   local mcp_servers_json="$1"
 

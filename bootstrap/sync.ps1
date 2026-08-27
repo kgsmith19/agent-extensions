@@ -285,6 +285,52 @@ function Sync-PluginRepo {
     return [PSCustomObject]@{ Dir = $dir; ResolvedSha = $resolved; Error = "" }
 }
 
+function Save-ResolvedCommit {
+    param([string]$RepoRoot, [string]$MarketplaceName, [string]$PluginName, [string]$Sha)
+
+    $path = Join-Path $RepoRoot "bootstrap\external-marketplaces.json"
+    if (-not (Test-Path $path)) { return "cannot record resolved commit: '$path' does not exist" }
+
+    try {
+        $doc = Get-Content $path -Raw | ConvertFrom-Json
+    } catch {
+        return "cannot record resolved commit: could not parse '$path' — $($_.Exception.Message)"
+    }
+
+    $marketplace = @($doc.marketplaces) | Where-Object { $_.name -eq $MarketplaceName } | Select-Object -First 1
+    if (-not $marketplace) {
+        return "cannot record resolved commit: marketplace '$MarketplaceName' is not declared in '$path'"
+    }
+
+    $found = $false
+    $newPlugins = @()
+    foreach ($entry in @($marketplace.plugins)) {
+        $name = if ($entry -is [string]) { $entry } else { [string]$entry.name }
+        if ($name -eq $PluginName) {
+            $found = $true
+            $newPlugins += [PSCustomObject]@{
+                name = $name
+                resolvedCommit = $Sha
+            }
+        } else {
+            $newPlugins += $entry
+        }
+    }
+
+    if (-not $found) {
+        return "cannot record resolved commit: plugin '$PluginName' is not declared under marketplace '$MarketplaceName'"
+    }
+
+    $marketplace.plugins = $newPlugins
+    try {
+        Set-Content -Path $path -Value ($doc | ConvertTo-Json -Depth 12)
+    } catch {
+        return "cannot record resolved commit: failed to write '$path' — $($_.Exception.Message)"
+    }
+
+    return ""
+}
+
 function ConvertTo-TomlString {
     param([string]$Value)
     $escaped = $Value -replace '\\', '\\' -replace '"', '\"'
