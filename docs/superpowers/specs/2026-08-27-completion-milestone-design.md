@@ -129,9 +129,17 @@ assert what the other four made declarative.
 
 ## Sequencing
 
-Spec 1 lands first. Specs 2, 3, and 4 then run concurrently in separate
-worktrees -- they touch disjoint areas: bootstrap entrypoint and docs, a new
-account module, and the translator layer. Spec 5 closes the milestone.
+Spec 1 lands first, then Spec 2, then Specs 3 and 4 concurrently, then
+Spec 5.
+
+Specs 3 and 4 each add a stage to the bootstrap entrypoint, so they cannot
+start before Spec 2 has defined what a stage is: its capability check, its
+failure-collection contract, and its skip-reporting format. Once that
+interface exists they are genuinely disjoint -- Spec 3 owns a new account
+module, Spec 4 owns the translator layer -- and run in separate worktrees,
+each adding one registration to the entrypoint.
+
+Spec 5 closes the milestone.
 
 ## Milestone acceptance
 
