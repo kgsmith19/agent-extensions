@@ -2,11 +2,14 @@
 [CmdletBinding()]
 param(
     [string]$RepoRoot = (Split-Path -Parent $PSScriptRoot),
-    [string]$CodexSkillsDir = (Join-Path $env:USERPROFILE ".agents\skills"),
-    [string]$AntigravityPluginsDir = (Join-Path $env:USERPROFILE ".gemini\config\plugins"),
+    [string]$CodexSkillsDir = (Join-Path $HOME ".agents\skills"),
+    [string]$AntigravityPluginsDir = (Join-Path $HOME ".gemini\config\plugins"),
     [switch]$SkipClaudeCode,
     [switch]$Import  # when set, only defines functions (used by sync.test.ps1)
 )
+
+$CodexSkillsDirOverridden = $PSBoundParameters.ContainsKey('CodexSkillsDir')
+$AntigravityPluginsDirOverridden = $PSBoundParameters.ContainsKey('AntigravityPluginsDir')
 
 $ErrorActionPreference = "Stop"
 
@@ -30,10 +33,16 @@ function New-OrRepairJunction {
         Remove-Item $LinkPath -Force
     }
 
+    # Junctions are an NTFS-only concept and don't exist on Linux/macOS.
+    # Windows uses a junction specifically because it needs neither Admin
+    # nor Developer Mode, unlike a Windows symlink. Non-Windows has no such
+    # restriction, so a real symlink there is the direct equivalent of what
+    # sync.sh already creates with `ln -s`.
+    $linkType = if ($IsWindows) { "Junction" } else { "SymbolicLink" }
     try {
-        New-Item -ItemType Junction -Path $LinkPath -Target $TargetPath -Force | Out-Null
+        New-Item -ItemType $linkType -Path $LinkPath -Target $TargetPath -Force | Out-Null
     } catch {
-        throw "Failed to create junction '$LinkPath' -> '$TargetPath': $($_.Exception.Message)"
+        throw "Failed to create $linkType '$LinkPath' -> '$TargetPath': $($_.Exception.Message)"
     }
 }
 
@@ -615,6 +624,21 @@ function Write-AntigravityMcpConfig {
     Set-Content -Path $target -Value $JsonContent -NoNewline
 }
 
+function Write-AntigravityPluginJson {
+    # Per https://antigravity.google/docs/ide/plugins/ and
+    # .../cli/plugins/: a directory is only recognized as a plugin at all
+    # if it has a plugin.json marker at its root, with a `name` matching
+    # ^[a-zA-Z0-9-_]+$. This repo's own plugins already ship one (linked
+    # wholesale); externally-vendored plugins are staged from scratch and
+    # need one generated, or Antigravity's loader would not see them.
+    param([string]$PluginStagedDir, [string]$PluginName)
+    if (-not (Test-Path $PluginStagedDir)) {
+        New-Item -ItemType Directory -Path $PluginStagedDir -Force | Out-Null
+    }
+    $target = Join-Path $PluginStagedDir "plugin.json"
+    (@{ name = $PluginName } | ConvertTo-Json) | Set-Content -Path $target
+}
+
 function Sync-CodexSkills {
     param([string]$RepoRoot, [string]$CodexSkillsDir)
 
@@ -722,6 +746,7 @@ function Sync-ExternalAntigravityContent {
                 if (-not (Test-Path $stagedPluginDir)) {
                     New-Item -ItemType Directory -Path $stagedPluginDir -Force | Out-Null
                 }
+                Write-AntigravityPluginJson -PluginStagedDir $stagedPluginDir -PluginName $pluginName
 
                 $skillsSource = Join-Path $pluginDir "skills"
                 if (Test-Path $skillsSource) {
@@ -790,27 +815,133 @@ function Sync-ClaudeCodeMarketplace {
     return $failures
 }
 
+# --- Capability detection ---
+#
+# Each stage is gated on whether its target surface actually exists on this
+# machine. A capability test returns a hashtable {Available, Reason}.
+# Invoke-Stage reports a skip (with reason) rather than the stage failing
+# or silently doing nothing. This is the "stage" interface later specs
+# register new stages against: one capability test, one run scriptblock,
+# one Invoke-Stage call.
+
+function Test-CodexCapability {
+    param([bool]$Overridden)
+    if ($Overridden) { return @{ Available = $true } }
+    $codexHome = Join-Path $HOME ".codex"
+    if (Test-Path $codexHome) { return @{ Available = $true } }
+    return @{ Available = $false; Reason = "no '$codexHome' directory found and -CodexSkillsDir was not explicitly set" }
+}
+
+function Test-AntigravityCapability {
+    param([bool]$Overridden)
+    if ($Overridden) { return @{ Available = $true } }
+    $geminiHome = Join-Path $HOME ".gemini"
+    if (Test-Path $geminiHome) { return @{ Available = $true } }
+    return @{ Available = $false; Reason = "no '$geminiHome' directory found and -AntigravityPluginsDir was not explicitly set" }
+}
+
+function Test-VendorCacheCapability {
+    param([bool]$CodexAvailable, [bool]$AntigravityAvailable)
+    if ($CodexAvailable -or $AntigravityAvailable) { return @{ Available = $true } }
+    return @{ Available = $false; Reason = "neither Codex nor Antigravity capability detected" }
+}
+
+function Test-ClaudeCodeCapability {
+    param([bool]$SkipClaudeCode)
+    if ($SkipClaudeCode) { return @{ Available = $false; Reason = "-SkipClaudeCode is set" } }
+    if (Get-Command claude -ErrorAction SilentlyContinue) { return @{ Available = $true } }
+    return @{ Available = $false; Reason = "'claude' CLI not found on PATH" }
+}
+
+# --- Stage runner ---
+#
+# $RunFn must return an array of failure-message strings (empty on
+# success). Own-plugin stages (Sync-CodexSkills, Sync-AntigravityPlugins)
+# throw on error instead of returning failures — Invoke-Stage catches that
+# and converts it into a recorded failure so one bad stage no longer halts
+# every later stage, matching the partial-failure isolation the external
+# stages already had.
+
+$script:stageOk = @()
+$script:stageSkipped = @()
+$script:stageFailed = @()
+$script:allFailures = @()
+
+function Invoke-Stage {
+    param(
+        [string]$StageName,
+        [hashtable]$Capability,
+        [scriptblock]$RunFn
+    )
+    if (-not $Capability.Available) {
+        Write-Host "Skipping stage '$StageName': $($Capability.Reason)"
+        $script:stageSkipped += "$StageName`: $($Capability.Reason)"
+        return
+    }
+    $failures = @()
+    try {
+        $failures = @(& $RunFn)
+    } catch {
+        $failures = @($_.Exception.Message)
+    }
+    if ($failures.Count -gt 0) {
+        $script:allFailures += $failures
+        $script:stageFailed += $StageName
+    } else {
+        $script:stageOk += $StageName
+    }
+}
+
 if ($Import) { return }
 
 $vendorCacheDir = Join-Path $RepoRoot ".vendor-cache"
 $stagedDir = Join-Path $vendorCacheDir "_staged"
-$codexConfigPath = Join-Path $env:USERPROFILE ".codex\config.toml"
+$codexConfigPath = Join-Path $HOME ".codex\config.toml"
 
-Sync-CodexSkills -RepoRoot $RepoRoot -CodexSkillsDir $CodexSkillsDir | Out-Null
-Sync-AntigravityPlugins -RepoRoot $RepoRoot -AntigravityPluginsDir $AntigravityPluginsDir | Out-Null
+$codexCap = Test-CodexCapability -Overridden $CodexSkillsDirOverridden
+$antigravityCap = Test-AntigravityCapability -Overridden $AntigravityPluginsDirOverridden
+$vendorCacheCap = Test-VendorCacheCapability -CodexAvailable $codexCap.Available -AntigravityAvailable $antigravityCap.Available
+$claudeCodeCap = Test-ClaudeCodeCapability -SkipClaudeCode $SkipClaudeCode.IsPresent
 
-$allFailures = @()
-$allFailures += (Sync-VendorCache -RepoRoot $RepoRoot -VendorCacheDir $vendorCacheDir)
-$allFailures += (Sync-ExternalCodexContent -RepoRoot $RepoRoot -VendorCacheDir $vendorCacheDir -CodexSkillsDir $CodexSkillsDir -CodexConfigPath $codexConfigPath)
-$allFailures += (Sync-ExternalAntigravityContent -RepoRoot $RepoRoot -VendorCacheDir $vendorCacheDir -StagedDir $stagedDir -AntigravityPluginsDir $AntigravityPluginsDir)
-
-if (-not $SkipClaudeCode) {
-    $allFailures += (Sync-ClaudeCodeMarketplace -RepoRoot $RepoRoot)
+Invoke-Stage -StageName "codex-skills" -Capability $codexCap -RunFn {
+    Sync-CodexSkills -RepoRoot $RepoRoot -CodexSkillsDir $CodexSkillsDir | Out-Null
+    @()
+}
+Invoke-Stage -StageName "antigravity-plugins" -Capability $antigravityCap -RunFn {
+    Sync-AntigravityPlugins -RepoRoot $RepoRoot -AntigravityPluginsDir $AntigravityPluginsDir | Out-Null
+    @()
 }
 
-if ($allFailures.Count -gt 0) {
+Invoke-Stage -StageName "vendor-cache" -Capability $vendorCacheCap -RunFn {
+    Sync-VendorCache -RepoRoot $RepoRoot -VendorCacheDir $vendorCacheDir
+}
+Invoke-Stage -StageName "external-codex-content" -Capability $codexCap -RunFn {
+    Sync-ExternalCodexContent -RepoRoot $RepoRoot -VendorCacheDir $vendorCacheDir -CodexSkillsDir $CodexSkillsDir -CodexConfigPath $codexConfigPath
+}
+Invoke-Stage -StageName "external-antigravity-content" -Capability $antigravityCap -RunFn {
+    Sync-ExternalAntigravityContent -RepoRoot $RepoRoot -VendorCacheDir $vendorCacheDir -StagedDir $stagedDir -AntigravityPluginsDir $AntigravityPluginsDir
+}
+
+Invoke-Stage -StageName "claude-code-marketplace" -Capability $claudeCodeCap -RunFn {
+    Sync-ClaudeCodeMarketplace -RepoRoot $RepoRoot
+}
+
+Write-Output ""
+Write-Output "--- Sync summary ---"
+if ($script:stageOk.Count -gt 0) {
+    Write-Output "Ran: $($script:stageOk -join ', ')"
+}
+if ($script:stageSkipped.Count -gt 0) {
+    Write-Output "Skipped:"
+    $script:stageSkipped | ForEach-Object { Write-Output "  - $_" }
+}
+if ($script:stageFailed.Count -gt 0) {
+    Write-Output "Failed: $($script:stageFailed -join ', ')"
+}
+
+if ($script:allFailures.Count -gt 0) {
     Write-Output "Sync completed with failures:"
-    $allFailures | ForEach-Object { Write-Output "  - $_" }
+    $script:allFailures | ForEach-Object { Write-Output "  - $_" }
     exit 1
 }
 

@@ -167,3 +167,32 @@ The milestone is complete when, from a machine holding no prior agent state:
   inferential. A skill deleted through the UI is invisible to `verify` until
   the next manual reconciliation. Stated as a limitation, not engineered
   around.
+
+## Amendment, 2026-08-27 (Spec 2 execution)
+
+Narrows, rather than resolves, the Antigravity risk above — recorded here
+per this design's own rule that it not be carried forward a third time
+without at least a sharper statement of what is and isn't known.
+
+Official docs (`antigravity.google/docs/ide/plugins/` and
+`.../cli/plugins/`) state a directory is only recognized as a plugin at all
+if it has a `plugin.json` marker at its root (`name` matching
+`^[a-zA-Z0-9-_]+$`). This repo's own two plugins already ship one and were
+unaffected. The external-marketplace staging path
+(`sync_external_antigravity_content` / `Sync-ExternalAntigravityContent`)
+did not generate one — every one of the 39 externally-vendored plugins was
+staging skills and MCP config into a directory Antigravity's loader would
+not have recognized as a plugin in the first place, per the documented
+behavior. Fixed by generating a minimal conformant `plugin.json` per staged
+plugin; covered by a new assertion in both
+`sync-external-antigravity.test.sh` and `.ps1`.
+
+What this does and does not establish: the generated files are now
+structurally correct against Antigravity's own published schema, and a
+live run on this session's Unix container confirms every plugin.json lands
+where the docs say the loader scans (`~/.gemini/config/plugins/<plugin>/`).
+It does not confirm the live Antigravity product actually reads them —
+Antigravity is a desktop IDE with no headless mode, and this container has
+neither the IDE nor a way to install it. That narrower gap — schema
+conformance confirmed, live product confirmation still absent — is the
+declared gap this spec commits to recording rather than resolving further.

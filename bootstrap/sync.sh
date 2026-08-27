@@ -2,7 +2,9 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CODEX_SKILLS_DIR_OVERRIDDEN="${CODEX_SKILLS_DIR:+1}"
 CODEX_SKILLS_DIR="${CODEX_SKILLS_DIR:-$HOME/.agents/skills}"
+ANTIGRAVITY_PLUGINS_DIR_OVERRIDDEN="${ANTIGRAVITY_PLUGINS_DIR:+1}"
 ANTIGRAVITY_PLUGINS_DIR="${ANTIGRAVITY_PLUGINS_DIR:-$HOME/.gemini/config/plugins}"
 SKIP_CLAUDE_CODE="${SKIP_CLAUDE_CODE:-}"
 
@@ -527,6 +529,19 @@ write_antigravity_mcp_config() {
   printf '%s' "$json_content" > "$plugin_staged_dir/mcp_config.json"
 }
 
+write_antigravity_plugin_json() {
+  # Per https://antigravity.google/docs/ide/plugins/ and
+  # .../cli/plugins/: a directory is only recognized as a plugin at all if
+  # it has a plugin.json marker at its root, with a `name` matching
+  # ^[a-zA-Z0-9-_]+$. This repo's own plugins already ship one (linked
+  # wholesale); externally-vendored plugins are staged from scratch and
+  # need one generated, or Antigravity's loader would not see them.
+  local plugin_staged_dir="$1"
+  local plugin_name="$2"
+  mkdir -p "$plugin_staged_dir"
+  jq -n --arg name "$plugin_name" '{name: $name}' > "$plugin_staged_dir/plugin.json"
+}
+
 sync_codex_skills() {
   local repo_root="$1"
   local codex_skills_dir="$2"
@@ -650,6 +665,7 @@ sync_external_antigravity_content() {
       plugin_dir="$(echo "$resolved_json" | jq -r '.dir')"
       staged_plugin_dir="$staged_dir/antigravity/$plugin"
       mkdir -p "$staged_plugin_dir"
+      write_antigravity_plugin_json "$staged_plugin_dir" "$plugin"
 
       skills_source="$plugin_dir/skills"
       if [ -d "$skills_source" ]; then
@@ -763,21 +779,119 @@ if [ "${1:-}" = "--import" ]; then
   return 0 2>/dev/null || exit 0
 fi
 
+# --- Capability detection ---
+#
+# Each stage below is gated on whether its target surface actually exists on
+# this machine. A capability function returns 0 (present) silently, or
+# returns non-zero and prints the reason to stdout — run_stage captures that
+# reason and reports it as a skip, rather than the stage failing or
+# silently doing nothing. This is the "stage" interface later specs
+# register new stages against: one capability function, one run function,
+# one run_stage call.
+
+codex_capability() {
+  if [ -n "$CODEX_SKILLS_DIR_OVERRIDDEN" ]; then
+    return 0
+  fi
+  if [ -d "$HOME/.codex" ]; then
+    return 0
+  fi
+  echo "no '$HOME/.codex' directory found and CODEX_SKILLS_DIR was not explicitly set"
+  return 1
+}
+
+antigravity_capability() {
+  if [ -n "$ANTIGRAVITY_PLUGINS_DIR_OVERRIDDEN" ]; then
+    return 0
+  fi
+  if [ -d "$HOME/.gemini" ]; then
+    return 0
+  fi
+  echo "no '$HOME/.gemini' directory found and ANTIGRAVITY_PLUGINS_DIR was not explicitly set"
+  return 1
+}
+
+vendor_cache_capability() {
+  if codex_capability >/dev/null 2>&1 || antigravity_capability >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "neither Codex nor Antigravity capability detected"
+  return 1
+}
+
+claude_code_capability() {
+  if [ -n "$SKIP_CLAUDE_CODE" ]; then
+    echo "SKIP_CLAUDE_CODE is set"
+    return 1
+  fi
+  if command -v claude >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "'claude' CLI not found on PATH"
+  return 1
+}
+
+always_capability() {
+  return 0
+}
+
+# --- Stage runner ---
+
+STAGE_OK=()
+STAGE_SKIPPED=()
+STAGE_FAILED=()
+
+run_stage() {
+  local stage_name="$1" capability_fn="$2" run_fn="$3"
+  shift 3
+  local reason
+
+  if ! reason="$("$capability_fn")"; then
+    echo "Skipping stage '$stage_name': $reason"
+    STAGE_SKIPPED+=("$stage_name: $reason")
+    return 0
+  fi
+
+  if ! "$run_fn" "$@"; then
+    echo "Stage '$stage_name' failed (see messages above)." >&2
+    STAGE_FAILED+=("$stage_name")
+    overall_failed=1
+    return 1
+  fi
+  STAGE_OK+=("$stage_name")
+  return 0
+}
+
+# --- Run stages ---
+
 VENDOR_CACHE_DIR="$REPO_ROOT/.vendor-cache"
 STAGED_DIR="$VENDOR_CACHE_DIR/_staged"
 CODEX_CONFIG_PATH="$HOME/.codex/config.toml"
 
 overall_failed=0
 
-sync_codex_skills "$REPO_ROOT" "$CODEX_SKILLS_DIR" || overall_failed=1
-sync_antigravity_plugins "$REPO_ROOT" "$ANTIGRAVITY_PLUGINS_DIR" || overall_failed=1
+run_stage "codex-skills" codex_capability sync_codex_skills "$REPO_ROOT" "$CODEX_SKILLS_DIR"
+run_stage "antigravity-plugins" antigravity_capability sync_antigravity_plugins "$REPO_ROOT" "$ANTIGRAVITY_PLUGINS_DIR"
 
-sync_vendor_cache "$REPO_ROOT" "$VENDOR_CACHE_DIR" || overall_failed=1
-sync_external_codex_content "$REPO_ROOT" "$VENDOR_CACHE_DIR" "$CODEX_SKILLS_DIR" "$CODEX_CONFIG_PATH" || overall_failed=1
-sync_external_antigravity_content "$REPO_ROOT" "$VENDOR_CACHE_DIR" "$STAGED_DIR" "$ANTIGRAVITY_PLUGINS_DIR" || overall_failed=1
+run_stage "vendor-cache" vendor_cache_capability sync_vendor_cache "$REPO_ROOT" "$VENDOR_CACHE_DIR"
+run_stage "external-codex-content" codex_capability sync_external_codex_content "$REPO_ROOT" "$VENDOR_CACHE_DIR" "$CODEX_SKILLS_DIR" "$CODEX_CONFIG_PATH"
+run_stage "external-antigravity-content" antigravity_capability sync_external_antigravity_content "$REPO_ROOT" "$VENDOR_CACHE_DIR" "$STAGED_DIR" "$ANTIGRAVITY_PLUGINS_DIR"
 
-if [ -z "$SKIP_CLAUDE_CODE" ]; then
-  sync_claude_code_marketplace "$REPO_ROOT" || overall_failed=1
+run_stage "claude-code-marketplace" claude_code_capability sync_claude_code_marketplace "$REPO_ROOT"
+
+echo
+echo "--- Sync summary ---"
+if [ ${#STAGE_OK[@]} -gt 0 ]; then
+  echo "Ran: ${STAGE_OK[*]}"
+fi
+if [ ${#STAGE_SKIPPED[@]} -gt 0 ]; then
+  echo "Skipped:"
+  for s in "${STAGE_SKIPPED[@]}"; do
+    echo "  - $s"
+  done
+fi
+if [ ${#STAGE_FAILED[@]} -gt 0 ]; then
+  echo "Failed: ${STAGE_FAILED[*]}"
 fi
 
 if [ "$overall_failed" -ne 0 ]; then

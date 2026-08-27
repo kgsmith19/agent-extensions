@@ -60,6 +60,15 @@ if (-not (Test-Path (Join-Path $etaLink "skills\eta-greet\SKILL.md"))) {
     $failures += "eta-repo-subpath's 'eta-greet' skill was not staged from its repo subdirectory"
 }
 
+# plugin.json marker (required by Antigravity's real loader to recognize a
+# directory as a plugin at all — see https://antigravity.google/docs/ide/plugins/)
+$alphaPluginJson = Join-Path $antigravityPluginsDir "alpha-skills\plugin.json"
+if (-not (Test-Path $alphaPluginJson)) {
+    $failures += "alpha-skills: no plugin.json was staged — Antigravity's loader would not recognize this directory as a plugin"
+} elseif ((Get-Content $alphaPluginJson -Raw | ConvertFrom-Json).name -ne "alpha-skills") {
+    $failures += "alpha-skills' plugin.json has the wrong 'name'"
+}
+
 $omegaReported = @($reported) | Where-Object { $_ -match "omega-absent" }
 if (-not $omegaReported) {
     $failures += "omega-absent is declared but not in the manifest; it must be reported as a failure"

@@ -61,6 +61,16 @@ fi
 if [ ! -f "$ANTIGRAVITY_DIR/eta-repo-subpath/skills/eta-greet/SKILL.md" ]; then
   failures+=("eta-repo-subpath's 'eta-greet' skill was not staged from its repo subdirectory")
 fi
+
+# --- plugin.json marker (required by Antigravity's real loader to
+# recognize a directory as a plugin at all — see
+# https://antigravity.google/docs/ide/plugins/) ---
+ALPHA_PLUGIN_JSON="$ANTIGRAVITY_DIR/alpha-skills/plugin.json"
+if [ ! -f "$ALPHA_PLUGIN_JSON" ]; then
+  failures+=("alpha-skills: no plugin.json was staged — Antigravity's loader would not recognize this directory as a plugin")
+elif [ "$(jq -r '.name' "$ALPHA_PLUGIN_JSON")" != "alpha-skills" ]; then
+  failures+=("alpha-skills' plugin.json has the wrong 'name'")
+fi
 if ! grep -q "omega-absent" "$STDERR_CAPTURE"; then
   failures+=("omega-absent is declared but not in the manifest; it must be reported as a failure")
 fi
