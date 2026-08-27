@@ -58,6 +58,46 @@ resolve_marketplace_url() {
   fi
 }
 
+get_declared_plugins() {
+  local mp_json="$1"
+  echo "$mp_json" | jq -c '.plugins[]? | if type == "string" then {name: ., resolvedCommit: ""} else {name: .name, resolvedCommit: (.resolvedCommit // "")} end'
+}
+
+plugin_source_missing() {
+  jq -n --arg e "$1" '{kind:"missing",path:"",url:"",sha:"",ref:"",subpath:"",error:$e}'
+}
+
+get_plugin_source() {
+  local marketplace_dir="$1" plugin_name="$2"
+  local manifest="$marketplace_dir/.claude-plugin/marketplace.json"
+
+  if [ ! -f "$manifest" ]; then
+    plugin_source_missing "no .claude-plugin/marketplace.json found at '$marketplace_dir'"
+    return 0
+  fi
+  if ! jq -e . "$manifest" >/dev/null 2>&1; then
+    plugin_source_missing "could not parse '$manifest'"
+    return 0
+  fi
+
+  jq -c --arg n "$plugin_name" --arg m "$manifest" '
+    [.plugins[]? | select(.name == $n)] as $matches
+    | if ($matches | length) == 0 then
+        {kind:"missing",path:"",url:"",sha:"",ref:"",subpath:"",
+         error:("plugin \u0027" + $n + "\u0027 is not declared in \u0027" + $m + "\u0027")}
+      else ($matches[0]) as $e
+      | if ($e.source | type) == "string" then
+          {kind:"inline",path:$e.source,url:"",sha:"",ref:"",subpath:"",error:""}
+        elif $e.source.source == "url" then
+          {kind:"repo",path:"",url:($e.source.url // ""),sha:($e.source.sha // ""),
+           ref:($e.source.ref // ""),subpath:($e.source.path // ""),error:""}
+        else
+          {kind:"missing",path:"",url:"",sha:"",ref:"",subpath:"",
+           error:("plugin \u0027" + $n + "\u0027 declares unsupported source kind")}
+        end
+      end' "$manifest"
+}
+
 sync_vendor_cache() {
   local repo_root="$1"
   local vendor_cache_dir="$2"

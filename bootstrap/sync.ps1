@@ -54,6 +54,70 @@ function Resolve-MarketplaceUrl {
     return $Repo
 }
 
+function Get-DeclaredPlugins {
+    param($Marketplace)
+    $out = @()
+    foreach ($entry in @($Marketplace.plugins)) {
+        if ($entry -is [string]) {
+            $out += [PSCustomObject]@{ Name = $entry; ResolvedCommit = "" }
+        } else {
+            $rc = ""
+            if ($entry.PSObject.Properties['resolvedCommit']) { $rc = [string]$entry.resolvedCommit }
+            $out += [PSCustomObject]@{ Name = [string]$entry.name; ResolvedCommit = $rc }
+        }
+    }
+    return $out
+}
+
+function New-PluginSourceResult {
+    param([string]$Kind, [string]$Path, [string]$Url, [string]$Sha, [string]$Ref, [string]$SubPath, [string]$ErrorText)
+    return [PSCustomObject]@{
+        Kind = $Kind; Path = $Path; Url = $Url; Sha = $Sha
+        Ref = $Ref; SubPath = $SubPath; Error = $ErrorText
+    }
+}
+
+function Get-PluginSource {
+    param([string]$MarketplaceDir, [string]$PluginName)
+
+    $manifestPath = Join-Path $MarketplaceDir ".claude-plugin\marketplace.json"
+    if (-not (Test-Path $manifestPath)) {
+        return New-PluginSourceResult -Kind "missing" -Path "" -Url "" -Sha "" -Ref "" -SubPath "" `
+            -ErrorText "no .claude-plugin/marketplace.json found at '$MarketplaceDir'"
+    }
+
+    try {
+        $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
+    } catch {
+        return New-PluginSourceResult -Kind "missing" -Path "" -Url "" -Sha "" -Ref "" -SubPath "" `
+            -ErrorText "could not parse '$manifestPath' — $($_.Exception.Message)"
+    }
+
+    $entry = @($manifest.plugins) | Where-Object { $_.name -eq $PluginName } | Select-Object -First 1
+    if (-not $entry) {
+        return New-PluginSourceResult -Kind "missing" -Path "" -Url "" -Sha "" -Ref "" -SubPath "" `
+            -ErrorText "plugin '$PluginName' is not declared in '$manifestPath'"
+    }
+
+    if ($entry.source -is [string]) {
+        return New-PluginSourceResult -Kind "inline" -Path ([string]$entry.source) -Url "" -Sha "" -Ref "" -SubPath "" -ErrorText ""
+    }
+
+    $src = $entry.source
+    $field = {
+        param($Name)
+        if ($src.PSObject.Properties[$Name]) { return [string]$src.$Name }
+        return ""
+    }
+    $kindField = & $field 'source'
+    if ($kindField -ne 'url') {
+        return New-PluginSourceResult -Kind "missing" -Path "" -Url "" -Sha "" -Ref "" -SubPath "" `
+            -ErrorText "plugin '$PluginName' declares unsupported source kind '$kindField'"
+    }
+    return New-PluginSourceResult -Kind "repo" -Path "" `
+        -Url (& $field 'url') -Sha (& $field 'sha') -Ref (& $field 'ref') -SubPath (& $field 'path') -ErrorText ""
+}
+
 function Sync-VendorCache {
     param([string]$RepoRoot, [string]$VendorCacheDir)
 
