@@ -32,15 +32,10 @@ new_or_repair_symlink() {
     rm "$link_path"
   fi
 
-  if ! ln -s "$target_path" "$link_path"; then
+  if ! ln -s "$target_path" "$link_path" || [ ! -L "$link_path" ]; then
     echo "Failed to create symlink '$link_path' -> '$target_path'" >&2
     return 1
   fi
-  if [ -L "$link_path" ] || [ -e "$link_path" ]; then
-    return 0
-  fi
-  echo "Failed to create symlink '$link_path' -> '$target_path'" >&2
-  return 1
 }
 
 get_external_marketplaces_json() {

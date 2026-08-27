@@ -49,8 +49,8 @@ if ! grep -q "epsilon-invalid-json" "$STDERR_CAPTURE"; then
   failures+=("Expected a reported failure mentioning epsilon-invalid-json (invalid JSON) on stderr")
 fi
 
-if [ ! -d "$ANTIGRAVITY_DIR/alpha-skills" ]; then
-  failures+=("alpha-skills was not staged into the Antigravity plugins dir")
+if [ ! -L "$ANTIGRAVITY_DIR/alpha-skills" ]; then
+  failures+=("alpha-skills was not linked into the Antigravity plugins dir")
 fi
 if [ ! -f "$ANTIGRAVITY_DIR/alpha-skills/skills/greet/SKILL.md" ]; then
   failures+=("alpha-skills' skill is not reachable through the Antigravity link")
