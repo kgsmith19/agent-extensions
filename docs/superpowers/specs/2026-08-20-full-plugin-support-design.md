@@ -213,3 +213,106 @@ Acceptance criteria:
 - Commands re-authored as skills for Codex/Antigravity (full re-authoring
   effort across all 35 plugins' commands, per Kyle's explicit scope choice —
   not a mechanical translation).
+
+---
+
+## Amendment, 2026-08-27: plugin source resolution
+
+Live verification of the implemented branch found the design's central
+locating assumption to be wrong. This amendment supersedes the affected
+parts of Architecture, Data flow, and Error handling above. Everything else
+in this design stands.
+
+### What live verification found
+
+`sync.ps1` reported `Sync complete.` and exited 0 while linking 0 of 17
+external skills, leaving `~/.codex/config.toml` byte-identical, and creating
+39 Antigravity junctions whose targets were all empty directories.
+
+Three defects, in increasing order of seriousness:
+
+1. The implementation resolved a plugin to
+   `<cache>/<marketplace>/<plugin>`. Nineteen of the declared plugins
+   actually live at `<cache>/<marketplace>/plugins/<plugin>`.
+2. Three more (`github`, `greptile`, `playwright`) live under
+   `external_plugins/`, a second inline layout not accounted for anywhere.
+3. Seventeen are not stored in the marketplace repository at all. They are
+   separate git repositories referenced by URL. The entire
+   `superpowers-marketplace` clone is `LICENSE` and `README.md`.
+
+Every one of these failed silently: a plugin directory that is not found was
+not an error, so the loop continued, collected no failure, and exited 0.
+
+The tests did not catch this because the fixture marketplace places its
+plugins at the repository root — a layout no real marketplace uses. Fixture
+and implementation shared one wrong assumption, so a green suite proved only
+that they agreed with each other.
+
+### Corrected model: the manifest is the only authority
+
+A plugin's location is read from its marketplace's own
+`.claude-plugin/marketplace.json`. It is never inferred from a path
+convention. Census of the 39 declared plugins confirms every one is
+resolvable there, in one of two forms:
+
+**Inline** — `source` is a string holding a repo-relative path (22 plugins:
+19 under `./plugins/`, 3 under `./external_plugins/`). Resolve relative to
+the marketplace clone root. The two directory names are incidental; any
+relative path must work.
+
+**External repository** — `source` is an object with `source: "url"` and a
+`url`, plus optional `sha`, `ref`, and `path` (17 plugins). Clone it into
+`.vendor-cache/_plugins/<marketplace>/<plugin>/`, separate from the
+marketplace clones. `path`, when present, names a subdirectory of that clone
+that is the plugin root (4 plugins). `ref` names a branch or tag (3).
+
+### Pinning the unpinned
+
+Seven external-repo plugins declare neither `sha` nor `ref`, so the
+marketplace manifest alone cannot pin them and they would float to whatever
+their default branch holds at sync time. That contradicts this repo's
+reproducibility guarantee.
+
+Resolution: **pin on first use.** On first sync of an unpinned plugin, the
+resolved commit SHA is written back into
+`bootstrap/external-marketplaces.json` as a `resolvedCommit` field alongside
+the plugin name, and every later sync checks out that SHA. Advancing it is a
+deliberate edit, consistent with the existing rule that re-pinning is manual
+and nothing propagates automatically. A plugin that already declares `sha`
+is pinned by it and never needs `resolvedCommit`.
+
+This makes `external-marketplaces.json` a lockfile as well as a declaration.
+The declaration is hand-edited; the resolved pins are machine-written. The
+file records both, and a sync that writes a new pin says so on stdout.
+
+### Error handling, corrected
+
+A declared plugin that cannot be resolved is a **reported failure**, never a
+skip. This covers: absent from the marketplace manifest, an inline path that
+does not exist in the clone, a clone or checkout that fails, and a `path`
+subdirectory that is missing. Consistent with this design's existing rule,
+one plugin's failure must not abort the other 38, and any failure means a
+non-zero exit.
+
+A plugin that resolves successfully but ships no `skills/` and no
+`.mcp.json` contributes nothing and is not a failure — unchanged from the
+original design, and still distinct from "could not be found."
+
+### Additional acceptance criteria
+
+These are additive to the six above.
+
+7. **Source-kind coverage.** Every one of the three source forms — inline
+   path, external repo pinned by `sha`, external repo pinned by
+   `resolvedCommit` — is exercised by the fixture, including an external-repo
+   plugin using `path` to locate a subdirectory.
+8. **No silent skips.** A declared plugin that cannot be resolved by any
+   means produces a named failure on stdout and a non-zero exit. Verified by
+   a fixture that declares a plugin absent from its manifest.
+9. **Live, not fixture.** Criteria 2 and 3 are re-verified against the real
+   39-plugin roster on a real machine, counting linked skills and
+   `[mcp_servers.*]` entries against the count the manifests predict. A green
+   test suite does not satisfy this criterion.
+10. **Fixture realism.** The fixture marketplace reproduces the real
+    directory layouts: plugins under `plugins/`, under `external_plugins/`,
+    and referenced as external repositories.

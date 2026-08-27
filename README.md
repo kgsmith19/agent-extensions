@@ -11,3 +11,7 @@ for why it's built this way.
 pwsh bootstrap/sync.ps1   # Windows
 ./bootstrap/sync.sh       # Unix / cloud containers
 ```
+
+This also syncs Skills and MCP servers from the external marketplaces
+declared in `bootstrap/external-marketplaces.json` — see
+[AGENTS.md](./AGENTS.md#external-marketplaces).
