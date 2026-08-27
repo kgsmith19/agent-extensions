@@ -44,13 +44,34 @@
       "repo": "obra/superpowers-marketplace",
       "pinnedCommit": "1ab7b8eeef707f21565471f11d3782fac3dd1c61",
       "plugins": [
-        "claude-session-driver",
-        "double-shot-latte",
-        "elements-of-style",
-        "episodic-memory",
-        "private-journal-mcp",
-        "superpowers-chrome",
-        "superpowers-lab"
+        {
+          "name": "claude-session-driver",
+          "resolvedCommit": "d97d1eb0a904546ed059b0a33dd5d4aa3e199c9a"
+        },
+        {
+          "name": "double-shot-latte",
+          "resolvedCommit": "dfe756798327554783e77758d9d50d44b4308bbf"
+        },
+        {
+          "name": "elements-of-style",
+          "resolvedCommit": "05fc4f0d2b97b7c042dd9949ad658568e4a1324e"
+        },
+        {
+          "name": "episodic-memory",
+          "resolvedCommit": "10757690210574421f1df5f35835af8d0c74d984"
+        },
+        {
+          "name": "private-journal-mcp",
+          "resolvedCommit": "016953f24a73dabb8a68569aecf4ebd89c74d70b"
+        },
+        {
+          "name": "superpowers-chrome",
+          "resolvedCommit": "782358eb8d3b99e3cc1321354b9233f660fdac7a"
+        },
+        {
+          "name": "superpowers-lab",
+          "resolvedCommit": "51111f74f24058117752d9aa917cb19859f8ec86"
+        }
       ]
     }
   ]
