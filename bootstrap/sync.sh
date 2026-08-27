@@ -88,7 +88,7 @@ get_plugin_source() {
       else ($matches[0]) as $e
       | if ($e.source | type) == "string" then
           {kind:"inline",path:$e.source,url:"",sha:"",ref:"",subpath:"",error:""}
-        elif $e.source.source == "url" then
+        elif ($e.source.source == "url" or $e.source.source == "git-subdir") then
           {kind:"repo",path:"",url:($e.source.url // ""),sha:($e.source.sha // ""),
            ref:($e.source.ref // ""),subpath:($e.source.path // ""),error:""}
         else
@@ -96,6 +96,39 @@ get_plugin_source() {
            error:("plugin \u0027" + $n + "\u0027 declares unsupported source kind")}
         end
       end' "$manifest"
+}
+
+normalize_external_mcp_servers_json() {
+  local mcp_servers_json="$1"
+  local plugin_dir="$2"
+
+  jq -c --arg plugin_dir "$plugin_dir" '
+    to_entries
+    | map(
+        .value |= (
+          . as $server
+          | del(.cwd, .env_vars, .type, ._meta)
+          | if ($server | has("env_vars")) then
+              .env = (
+                (.env // {})
+                + (reduce ($server.env_vars[]?) as $var ({}; . + (if env[$var] == null then {} else {($var): env[$var]} end)))
+              )
+            else . end
+          | if ($server | has("cwd")) and ($server | has("args")) and (.args | type == "array") and ((.args | length) > 0) then
+              .args[0] = (
+                if (.args[0] | test("^(?:/|[A-Za-z]:\\\\|\\\\)")) then
+                  .args[0]
+                else
+                  ($plugin_dir + "/" + (($server.cwd // ".") | tostring) + "/" + (.args[0] | tostring))
+                end
+              )
+            else . end
+          | if ($server | has("cwd")) then
+              .env = ((.env // {}) + {CLAUDE_PLUGIN_ROOT: $plugin_dir})
+            else . end
+        )
+      ) | from_entries
+  ' <<< "$mcp_servers_json"
 }
 
 sync_vendor_cache() {
@@ -563,12 +596,17 @@ sync_external_codex_content() {
         if ! mcp_servers="$(jq -c '.mcpServers // {}' "$mcp_path")"; then
           echo "Plugin '$plugin' (from '$name'): failed to parse '$mcp_path' as JSON" >&2
           failed=1
-        elif toml="$(mcp_json_to_codex_toml "$mcp_servers")"; then
+        elif normalized_mcp_servers="$(normalize_external_mcp_servers_json "$mcp_servers" "$plugin_dir")"; then
+          if toml="$(mcp_json_to_codex_toml "$normalized_mcp_servers")"; then
           if [ -n "$toml" ]; then
             merge_args+=("$plugin" "$toml")
           fi
+          else
+            echo "Plugin '$plugin' (from '$name'): MCP translation to Codex TOML failed" >&2
+            failed=1
+          fi
         else
-          echo "Plugin '$plugin' (from '$name'): MCP translation to Codex TOML failed" >&2
+          echo "Plugin '$plugin' (from '$name'): failed to normalize '$mcp_path' for Codex" >&2
           failed=1
         fi
       fi
@@ -628,10 +666,16 @@ sync_external_antigravity_content() {
           echo "Plugin '$plugin' (from '$name'): failed to parse '$mcp_path' as JSON" >&2
           failed=1
           continue
-        elif config="$(mcp_json_to_antigravity_config "$mcp_servers")"; then
-          write_antigravity_mcp_config "$staged_plugin_dir" "$config"
+        elif normalized_mcp_servers="$(normalize_external_mcp_servers_json "$mcp_servers" "$plugin_dir")"; then
+          if config="$(mcp_json_to_antigravity_config "$normalized_mcp_servers")"; then
+            write_antigravity_mcp_config "$staged_plugin_dir" "$config"
+          else
+            echo "Plugin '$plugin' (from '$name'): MCP translation to Antigravity config failed" >&2
+            failed=1
+            continue
+          fi
         else
-          echo "Plugin '$plugin' (from '$name'): MCP translation to Antigravity config failed" >&2
+          echo "Plugin '$plugin' (from '$name'): failed to normalize '$mcp_path' for Antigravity" >&2
           failed=1
           continue
         fi
@@ -703,13 +747,13 @@ sync_claude_code_marketplace() {
     fi
 
     while IFS= read -r plugin_line; do
-      pname="$(echo "$plugin_line" | jq -r '.')"
+      pname="$(echo "$plugin_line" | jq -r '.name')"
       [ -n "$pname" ] || continue
       if ! claude plugin install "$pname@$name"; then
         echo "claude plugin install '$pname@$name' failed" >&2
         failed=1
       fi
-    done < <(echo "$mp_json" | jq -c '.plugins[]')
+    done < <(get_declared_plugins "$mp_json")
   done < <(get_external_marketplaces_json "$repo_root")
 
   return $failed

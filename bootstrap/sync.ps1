@@ -69,6 +69,19 @@ function Get-DeclaredPlugins {
     return $out
 }
 
+function Get-JsonValue {
+    param($Object, [string]$Name)
+
+    if ($null -eq $Object) { return $null }
+    if ($Object -is [System.Collections.IDictionary]) {
+        if ($Object.Contains($Name)) { return $Object[$Name] }
+        return $null
+    }
+    $prop = $Object.PSObject.Properties[$Name]
+    if ($prop) { return $prop.Value }
+    return $null
+}
+
 function New-PluginSourceResult {
     param([string]$Kind, [string]$Path, [string]$Url, [string]$Sha, [string]$Ref, [string]$SubPath, [string]$ErrorText)
     return [PSCustomObject]@{
@@ -87,35 +100,114 @@ function Get-PluginSource {
     }
 
     try {
-        $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
+        $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json -AsHashtable
     } catch {
         return New-PluginSourceResult -Kind "missing" -Path "" -Url "" -Sha "" -Ref "" -SubPath "" `
             -ErrorText "could not parse '$manifestPath' — $($_.Exception.Message)"
     }
 
-    $entry = @($manifest.plugins) | Where-Object { $_.name -eq $PluginName } | Select-Object -First 1
+    $entry = @($manifest['plugins']) | Where-Object { [string](Get-JsonValue $_ 'name') -eq $PluginName } | Select-Object -First 1
     if (-not $entry) {
         return New-PluginSourceResult -Kind "missing" -Path "" -Url "" -Sha "" -Ref "" -SubPath "" `
             -ErrorText "plugin '$PluginName' is not declared in '$manifestPath'"
     }
 
-    if ($entry.source -is [string]) {
-        return New-PluginSourceResult -Kind "inline" -Path ([string]$entry.source) -Url "" -Sha "" -Ref "" -SubPath "" -ErrorText ""
+    $source = Get-JsonValue $entry 'source'
+    if ($source -is [string]) {
+        return New-PluginSourceResult -Kind "inline" -Path ([string]$source) -Url "" -Sha "" -Ref "" -SubPath "" -ErrorText ""
     }
 
-    $src = $entry.source
+    $src = $source
     $field = {
         param($Name)
-        if ($src.PSObject.Properties[$Name]) { return [string]$src.$Name }
+        $value = Get-JsonValue $src $Name
+        if ($null -ne $value) { return [string]$value }
         return ""
     }
     $kindField = & $field 'source'
-    if ($kindField -ne 'url') {
+    if ($kindField -ne 'url' -and $kindField -ne 'git-subdir') {
         return New-PluginSourceResult -Kind "missing" -Path "" -Url "" -Sha "" -Ref "" -SubPath "" `
             -ErrorText "plugin '$PluginName' declares unsupported source kind '$kindField'"
     }
     return New-PluginSourceResult -Kind "repo" -Path "" `
         -Url (& $field 'url') -Sha (& $field 'sha') -Ref (& $field 'ref') -SubPath (& $field 'path') -ErrorText ""
+}
+
+function Normalize-ExternalMcpServers {
+    param($McpServers, [string]$PluginDir)
+
+    $normalized = [ordered]@{}
+
+    foreach ($prop in @($McpServers.PSObject.Properties)) {
+        $serverName = $prop.Name
+        $server = $prop.Value
+        $serverCopy = [ordered]@{}
+        $envCopy = [ordered]@{}
+        $hasCwd = $false
+        $cwd = ""
+
+        foreach ($serverProp in @($server.PSObject.Properties)) {
+            switch ($serverProp.Name) {
+                'cwd' {
+                    $hasCwd = $true
+                    $cwd = [string]$serverProp.Value
+                }
+                'type' { continue }
+                '_meta' { continue }
+                'env_vars' {
+                    foreach ($envVarName in @($serverProp.Value)) {
+                        $envVarName = [string]$envVarName
+                        if ([string]::IsNullOrWhiteSpace($envVarName)) { continue }
+                        $value = [Environment]::GetEnvironmentVariable($envVarName)
+                        if (-not [string]::IsNullOrEmpty($value)) {
+                            $envCopy[$envVarName] = [string]$value
+                        }
+                    }
+                }
+                'env' {
+                    foreach ($envProp in @($serverProp.Value.PSObject.Properties)) {
+                        $envCopy[$envProp.Name] = [string]$envProp.Value
+                    }
+                }
+                default {
+                    $serverCopy[$serverProp.Name] = $serverProp.Value
+                }
+            }
+        }
+
+        if ($hasCwd -and $serverCopy.Contains('args')) {
+            $args = @($serverCopy['args'])
+            if ($args.Count -gt 0) {
+                $firstArg = [string]$args[0]
+                if (-not [System.IO.Path]::IsPathRooted($firstArg)) {
+                    $baseDir = if ([string]::IsNullOrWhiteSpace($cwd)) { $PluginDir } else { Join-Path $PluginDir $cwd }
+                    $args[0] = [System.IO.Path]::GetFullPath((Join-Path $baseDir $firstArg))
+                    $serverCopy['args'] = $args
+                }
+            }
+            if (-not $envCopy.Contains('CLAUDE_PLUGIN_ROOT')) {
+                $envCopy['CLAUDE_PLUGIN_ROOT'] = $PluginDir
+            }
+        }
+
+        if ($envCopy.Count -gt 0) {
+            $serverCopy['env'] = [PSCustomObject]$envCopy
+        }
+
+        $normalized[$serverName] = [PSCustomObject]$serverCopy
+    }
+
+    return [PSCustomObject]$normalized
+}
+
+function Get-McpServers {
+    param($McpJson)
+
+    $servers = Get-JsonValue $McpJson 'mcpServers'
+    if ($null -eq $servers) {
+        return [PSCustomObject]@{}
+    }
+    return $servers
 }
 
 function Sync-VendorCache {
@@ -573,7 +665,7 @@ function Sync-ExternalCodexContent {
             if (Test-Path $mcpPath) {
                 try {
                     $mcpJson = Get-Content $mcpPath -Raw | ConvertFrom-Json
-                    $servers = if ($mcpJson.PSObject.Properties['mcpServers']) { $mcpJson.mcpServers } else { [PSCustomObject]@{} }
+                    $servers = if ($mcpJson.PSObject.Properties['mcpServers']) { Normalize-ExternalMcpServers -McpServers $mcpJson.mcpServers -PluginDir $pluginDir } else { [PSCustomObject]@{} }
                     $toml = ConvertTo-CodexMcpToml -McpServers $servers
                     if (-not [string]::IsNullOrWhiteSpace($toml)) {
                         $tomlByPlugin[$pluginName] = $toml
@@ -640,7 +732,7 @@ function Sync-ExternalAntigravityContent {
                 $mcpPath = Join-Path $pluginDir ".mcp.json"
                 if (Test-Path $mcpPath) {
                     $mcpJson = Get-Content $mcpPath -Raw | ConvertFrom-Json
-                    $servers = if ($mcpJson.PSObject.Properties['mcpServers']) { $mcpJson.mcpServers } else { [PSCustomObject]@{} }
+                    $servers = if ($mcpJson.PSObject.Properties['mcpServers']) { Normalize-ExternalMcpServers -McpServers $mcpJson.mcpServers -PluginDir $pluginDir } else { [PSCustomObject]@{} }
                     $config = ConvertTo-AntigravityMcpConfig -McpServers $servers
                     if (-not [string]::IsNullOrWhiteSpace($config)) {
                         Write-AntigravityMcpConfig -PluginStagedDir $stagedPluginDir -JsonContent $config
@@ -687,7 +779,8 @@ function Sync-ClaudeCodeMarketplace {
             $failures += "claude plugin marketplace add '$($mp.repo)' failed with exit code $LASTEXITCODE"
             continue
         }
-        foreach ($pluginName in $mp.plugins) {
+        foreach ($declared in (Get-DeclaredPlugins -Marketplace $mp)) {
+            $pluginName = $declared.Name
             & claude plugin install "$pluginName@$($mp.name)" | Out-Null
             if ($LASTEXITCODE -ne 0) {
                 $failures += "claude plugin install '$pluginName@$($mp.name)' failed with exit code $LASTEXITCODE"
