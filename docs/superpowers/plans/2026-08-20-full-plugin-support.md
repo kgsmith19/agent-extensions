@@ -17,6 +17,8 @@
 - `sync.sh`'s MCP-translation path requires `jq` on `PATH`; if absent, fail loudly with an actionable message naming `jq` specifically. The rest of `sync.sh` has no new dependency. `sync.ps1` has no new dependency at all (native JSON cmdlets).
 - Junction/symlink safety: never overwrite a path that exists and isn't a link this script manages (existing `New-OrRepairJunction`/`new_or_repair_symlink` rule, unchanged, reused as-is by every new call site).
 - TDD first for every task with executable behavior: write the failing test, watch it fail, then implement. Task 1 is data-only (a JSON file with no behavior of its own) — its correctness is verified by Task 3's parser tests, which parse the real file, not a placeholder assertion.
+- **(Amendment 2026-08-27)** A plugin's location is read from its marketplace's `.claude-plugin/marketplace.json` and never inferred from a path convention. A declared plugin that cannot be resolved — absent from the manifest, inline path missing from the clone, clone/checkout failure, or a missing `path` subdirectory — is a reported failure, never a silent skip.
+- **(Amendment 2026-08-27)** Test fixtures must reproduce the real marketplace layouts (`plugins/`, `external_plugins/`, and external-repo references). A fixture that shares an assumption with the implementation proves only that the two agree with each other.
 - Follow existing test conventions exactly: plain accumulate-into-`$failures`-array-then-exit scripts (PowerShell) / accumulate-into-`failures=()`-then-exit scripts (Bash), scratch-isolated via a temp directory unless the task is explicitly a live-CLI test (matching `sync.claude-code.test.ps1`'s precedent).
 
 ---
@@ -2636,3 +2638,1516 @@ git add -A
 git commit -m "Real end-to-end sync verified against all 39 external plugins"
 ```
 
+
+---
+
+# Amendment tasks (2026-08-27)
+
+Tasks 1–11 are implemented and committed. Tasks 12–17 implement the
+`## Amendment, 2026-08-27: plugin source resolution` section of the design.
+
+Live verification of Tasks 1–11 found `sync.ps1` reporting `Sync complete.`
+and exiting 0 while linking 0 of 17 external skills, leaving
+`~/.codex/config.toml` byte-identical, and creating 39 Antigravity junctions
+to empty directories. Root cause: plugin location was inferred as
+`<cache>/<marketplace>/<plugin>`; the marketplace manifest actually declares
+it, in two forms. All 9 test suites passed because the fixture shared the
+implementation's wrong assumption.
+
+**Do these in order.** Task 12 rebuilds shared fixture infrastructure that
+every later task's tests depend on.
+
+**Porting each test to bash.** Tasks 12–14 give the PowerShell test in full
+and instruct you to mirror it. "Mirror" here is mechanical, not a judgment
+call: reproduce every assertion in the same order, with the same failure
+message text, following the existing bash suites' `failures=()` convention.
+Translate accessors exactly as follows.
+
+| PowerShell | Bash |
+|---|---|
+| `$s.Kind` | `echo "$s" \| jq -r '.kind'` |
+| `$s.Path` / `.Url` / `.Sha` / `.Ref` | `jq -r '.path'` / `.url` / `.sha` / `.ref` |
+| `$s.SubPath` | `jq -r '.subpath'` |
+| `$s.Error` | `jq -r '.error'` |
+| `$r.Dir` / `$r.ResolvedSha` | `jq -r '.dir'` / `jq -r '.resolvedSha'` |
+| `Test-Path (Join-Path $a $b)` | `[ -e "$a/$b" ]` |
+| `-notmatch 'x'` | `case "$v" in *x*) ;; *) fail ;; esac` |
+
+Two assertions do **not** port and must be omitted from the bash suites, with
+a one-line comment saying why: any assertion that a link is a *live* link
+(`[ -L ]`) fails on a Windows dev machine without Developer Mode — the
+pre-existing environment limitation recorded in the ledger. Assert the target
+content is reachable instead. Do not weaken any other assertion.
+
+---
+
+### Task 12: Rebuild the fixture marketplace to mirror real layouts
+
+**Files:**
+- Modify: `bootstrap/tests/fixtures/marketplace-fixture.ps1`
+- Modify: `bootstrap/tests/fixtures/marketplace-fixture.sh`
+- Modify: `bootstrap/tests/fixtures/marketplace-fixture.test.ps1`
+- Modify: `bootstrap/tests/fixtures/marketplace-fixture.test.sh`
+
+**Interfaces:**
+- Consumes: nothing from Tasks 13–17.
+- Produces:
+  - PowerShell: `New-FixturePluginRepo -DestDir <string>` returns `[string]` sha.
+    `New-FixtureMarketplace -DestDir <string> -PluginRepoDir <string> -PluginRepoSha <string>`
+    returns `[string]` sha. **`New-FixtureMarketplace` gains two required
+    parameters** — every existing caller must pass them.
+  - Bash: `new_fixture_plugin_repo <dest_dir>` echoes sha;
+    `new_fixture_marketplace <dest_dir> <plugin_repo_dir> <plugin_repo_sha>`
+    echoes sha.
+
+The current fixture writes plugin folders to the marketplace root and has no
+`.claude-plugin/marketplace.json` at all. After this task it has a manifest
+declaring every source shape seen in the real census.
+
+Existing plugin *content* (the `greet` skill, the four `.mcp.json` variants)
+is unchanged — only its location and the new manifest change. This keeps
+Tasks 4–9's assertions about MCP content valid.
+
+The fixture repos set `uploadpack.allowAnySHA1InWant=true`. Without it, `git
+fetch <sha>` against a local `file://` remote fails with "Server does not
+allow request for unadvertised object", which is a fixture limitation, not a
+defect in the code under test.
+
+- [ ] **Step 1: Write the failing test**
+
+Replace the body of `bootstrap/tests/fixtures/marketplace-fixture.test.ps1`:
+
+```powershell
+$ErrorActionPreference = "Stop"
+. "$PSScriptRoot\marketplace-fixture.ps1"
+
+$failures = @()
+$scratch = Join-Path ([IO.Path]::GetTempPath()) ("ae-fix-" + [Guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $scratch -Force | Out-Null
+
+try {
+    $repoDir = Join-Path $scratch "plugin-repo"
+    $repoSha = New-FixturePluginRepo -DestDir $repoDir
+    $mpDir = Join-Path $scratch "marketplace"
+    $mpSha = New-FixtureMarketplace -DestDir $mpDir -PluginRepoDir $repoDir -PluginRepoSha $repoSha
+
+    if ($repoSha -notmatch '^[0-9a-f]{40}$') { $failures += "plugin-repo sha malformed" }
+    if ($mpSha -notmatch '^[0-9a-f]{40}$') { $failures += "marketplace sha malformed" }
+
+    $manifestPath = Join-Path $mpDir ".claude-plugin\marketplace.json"
+    if (-not (Test-Path $manifestPath)) {
+        $failures += "fixture has no .claude-plugin/marketplace.json"
+    } else {
+        $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
+        $byName = @{}
+        foreach ($p in $manifest.plugins) { $byName[$p.name] = $p }
+
+        foreach ($n in @("alpha-skills","beta-mcp-stdio","gamma-mcp-http","delta-malformed","epsilon-invalid-json","zeta-repo-pinned","eta-repo-subpath","theta-repo-unpinned")) {
+            if (-not $byName.ContainsKey($n)) { $failures += "manifest missing plugin '$n'" }
+        }
+        if ($byName.ContainsKey("omega-absent")) { $failures += "'omega-absent' must NOT be in the manifest (negative case)" }
+
+        if ($byName["alpha-skills"].source -ne "./plugins/alpha-skills") { $failures += "alpha-skills source wrong" }
+        if ($byName["gamma-mcp-http"].source -ne "./external_plugins/gamma-mcp-http") { $failures += "gamma-mcp-http must live under external_plugins/" }
+        if ($byName["zeta-repo-pinned"].source.source -ne "url") { $failures += "zeta must be a url source" }
+        if ($byName["zeta-repo-pinned"].source.sha -ne $repoSha) { $failures += "zeta sha must match the plugin repo sha" }
+        if ($byName["eta-repo-subpath"].source.path -ne "nested/eta") { $failures += "eta must declare path 'nested/eta'" }
+        if ($byName["theta-repo-unpinned"].source.PSObject.Properties['sha']) { $failures += "theta must declare NO sha (unpinned case)" }
+    }
+
+    if (-not (Test-Path (Join-Path $mpDir "plugins\alpha-skills\skills\greet\SKILL.md"))) { $failures += "alpha-skills content not at plugins/alpha-skills" }
+    if (-not (Test-Path (Join-Path $mpDir "external_plugins\gamma-mcp-http\.mcp.json"))) { $failures += "gamma content not at external_plugins/gamma-mcp-http" }
+    if (-not (Test-Path (Join-Path $repoDir "skills\remote-greet\SKILL.md"))) { $failures += "plugin repo missing root skill" }
+    if (-not (Test-Path (Join-Path $repoDir "nested\eta\skills\eta-greet\SKILL.md"))) { $failures += "plugin repo missing nested/eta skill" }
+
+    Push-Location $repoDir
+    try { $allowAny = (& git config --get uploadpack.allowAnySHA1InWant | Out-String).Trim() } finally { Pop-Location }
+    if ($allowAny -ne "true") { $failures += "plugin repo must set uploadpack.allowAnySHA1InWant=true" }
+} finally {
+    Remove-Item $scratch -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+if ($failures.Count -gt 0) {
+    Write-Output "FAIL: marketplace fixture"
+    $failures | ForEach-Object { Write-Output "  - $_" }
+    exit 1
+}
+Write-Output "PASS: fixture builds real marketplace layout with manifest and all source kinds"
+```
+
+- [ ] **Step 2: Run it and watch it fail**
+
+Run: `pwsh -NoProfile -File bootstrap/tests/fixtures/marketplace-fixture.test.ps1`
+Expected: FAIL — `New-FixturePluginRepo` is not recognized.
+
+- [ ] **Step 3: Implement the PowerShell fixture builder**
+
+Replace `bootstrap/tests/fixtures/marketplace-fixture.ps1` entirely:
+
+```powershell
+function New-FixtureSkill {
+    param([string]$SkillsRoot, [string]$Name, [string]$Description)
+    $dir = Join-Path $SkillsRoot $Name
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    Set-Content -Path (Join-Path $dir "SKILL.md") -Value @"
+---
+name: $Name
+description: $Description
+---
+
+Fixture skill body.
+"@
+}
+
+function New-FixturePluginRepo {
+    param([string]$DestDir)
+
+    if (Test-Path $DestDir) { Remove-Item $DestDir -Recurse -Force }
+    New-Item -ItemType Directory -Path $DestDir -Force | Out-Null
+
+    New-FixtureSkill -SkillsRoot (Join-Path $DestDir "skills") -Name "remote-greet" -Description "Fixture skill served from an external plugin repo."
+    New-FixtureSkill -SkillsRoot (Join-Path $DestDir "nested\eta\skills") -Name "eta-greet" -Description "Fixture skill in a subdirectory of an external plugin repo."
+
+    Push-Location $DestDir
+    try {
+        & git init -q
+        & git config user.email "fixture@agent-extensions.test"
+        & git config user.name "agent-extensions fixture"
+        & git config uploadpack.allowAnySHA1InWant true
+        & git add -A
+        & git commit -q -m "Fixture external plugin repo"
+        return (& git rev-parse HEAD | Out-String).Trim()
+    } finally { Pop-Location }
+}
+
+function New-FixtureMarketplace {
+    param([string]$DestDir, [string]$PluginRepoDir, [string]$PluginRepoSha)
+
+    if (Test-Path $DestDir) { Remove-Item $DestDir -Recurse -Force }
+    New-Item -ItemType Directory -Path $DestDir -Force | Out-Null
+
+    New-FixtureSkill -SkillsRoot (Join-Path $DestDir "plugins\alpha-skills\skills") -Name "greet" -Description "Says hello. Fixture skill for agent-extensions sync tests."
+
+    $beta = Join-Path $DestDir "plugins\beta-mcp-stdio"
+    New-Item -ItemType Directory -Path $beta -Force | Out-Null
+    Set-Content -Path (Join-Path $beta ".mcp.json") -Value @'
+{
+  "mcpServers": {
+    "fixture-stdio": {
+      "command": "node",
+      "args": ["server.js", "--port", "0"],
+      "env": { "FIXTURE_MODE": "stdio" }
+    }
+  }
+}
+'@
+
+    $gamma = Join-Path $DestDir "external_plugins\gamma-mcp-http"
+    New-Item -ItemType Directory -Path $gamma -Force | Out-Null
+    Set-Content -Path (Join-Path $gamma ".mcp.json") -Value @'
+{
+  "mcpServers": {
+    "fixture-http": {
+      "url": "https://fixture.example.com/mcp",
+      "headers": { "Authorization": "Bearer FIXTURE_TOKEN" }
+    }
+  }
+}
+'@
+
+    $delta = Join-Path $DestDir "plugins\delta-malformed"
+    New-Item -ItemType Directory -Path $delta -Force | Out-Null
+    Set-Content -Path (Join-Path $delta ".mcp.json") -Value @'
+{
+  "mcpServers": {
+    "fixture-bad": {
+      "transportKind": "carrier-pigeon"
+    }
+  }
+}
+'@
+
+    $epsilon = Join-Path $DestDir "plugins\epsilon-invalid-json"
+    New-Item -ItemType Directory -Path $epsilon -Force | Out-Null
+    Set-Content -Path (Join-Path $epsilon ".mcp.json") -Value '{ "mcpServers": { "broken": } }'
+
+    $repoUrl = "file:///" + ($PluginRepoDir -replace '\\','/')
+    $manifest = [ordered]@{
+        name    = "fixture-marketplace"
+        plugins = @(
+            [ordered]@{ name = "alpha-skills";         source = "./plugins/alpha-skills" },
+            [ordered]@{ name = "beta-mcp-stdio";       source = "./plugins/beta-mcp-stdio" },
+            [ordered]@{ name = "gamma-mcp-http";       source = "./external_plugins/gamma-mcp-http" },
+            [ordered]@{ name = "delta-malformed";      source = "./plugins/delta-malformed" },
+            [ordered]@{ name = "epsilon-invalid-json"; source = "./plugins/epsilon-invalid-json" },
+            [ordered]@{ name = "zeta-repo-pinned";     source = [ordered]@{ source = "url"; url = $repoUrl; sha = $PluginRepoSha } },
+            [ordered]@{ name = "eta-repo-subpath";     source = [ordered]@{ source = "url"; url = $repoUrl; sha = $PluginRepoSha; path = "nested/eta" } },
+            [ordered]@{ name = "theta-repo-unpinned";  source = [ordered]@{ source = "url"; url = $repoUrl } }
+        )
+    }
+    $manifestDir = Join-Path $DestDir ".claude-plugin"
+    New-Item -ItemType Directory -Path $manifestDir -Force | Out-Null
+    Set-Content -Path (Join-Path $manifestDir "marketplace.json") -Value ($manifest | ConvertTo-Json -Depth 10)
+
+    Push-Location $DestDir
+    try {
+        & git init -q
+        & git config user.email "fixture@agent-extensions.test"
+        & git config user.name "agent-extensions fixture"
+        & git config uploadpack.allowAnySHA1InWant true
+        & git add -A
+        & git commit -q -m "Fixture marketplace content"
+        return (& git rev-parse HEAD | Out-String).Trim()
+    } finally { Pop-Location }
+}
+```
+
+- [ ] **Step 4: Run the test and watch it pass**
+
+Run: `pwsh -NoProfile -File bootstrap/tests/fixtures/marketplace-fixture.test.ps1`
+Expected: `PASS: fixture builds real marketplace layout with manifest and all source kinds`
+
+- [ ] **Step 5: Fix every existing caller of `New-FixtureMarketplace`**
+
+The function now needs two more arguments. Find the callers:
+
+Run: `grep -rln "New-FixtureMarketplace" bootstrap/`
+
+In each of `bootstrap/vendor-cache.test.ps1`,
+`bootstrap/sync-external-codex.test.ps1`, and
+`bootstrap/sync-external-antigravity.test.ps1`, replace the call:
+
+```powershell
+# before
+$sha = New-FixtureMarketplace -DestDir $fixtureDir
+# after
+$repoDir = Join-Path $scratch "plugin-repo"
+$repoSha = New-FixturePluginRepo -DestDir $repoDir
+$sha = New-FixtureMarketplace -DestDir $fixtureDir -PluginRepoDir $repoDir -PluginRepoSha $repoSha
+```
+
+Those three suites assert on plugins that just moved from the fixture root
+into `plugins/`, so they are **expected to fail** from here until Task 16
+teaches the sync functions to resolve through the manifest. Do not weaken
+their assertions to make them green now.
+
+- [ ] **Step 6: Port the same changes to bash**
+
+Replace `bootstrap/tests/fixtures/marketplace-fixture.sh`:
+
+```bash
+new_fixture_skill() {
+  local skills_root="$1" name="$2" description="$3"
+  mkdir -p "$skills_root/$name"
+  cat > "$skills_root/$name/SKILL.md" <<EOF
+---
+name: $name
+description: $description
+---
+
+Fixture skill body.
+EOF
+}
+
+new_fixture_plugin_repo() {
+  local dest_dir="$1"
+  rm -rf "$dest_dir"; mkdir -p "$dest_dir"
+  new_fixture_skill "$dest_dir/skills" "remote-greet" "Fixture skill served from an external plugin repo."
+  new_fixture_skill "$dest_dir/nested/eta/skills" "eta-greet" "Fixture skill in a subdirectory of an external plugin repo."
+  ( cd "$dest_dir" \
+    && git init -q \
+    && git config user.email "fixture@agent-extensions.test" \
+    && git config user.name "agent-extensions fixture" \
+    && git config uploadpack.allowAnySHA1InWant true \
+    && git add -A && git commit -q -m "Fixture external plugin repo" \
+    && git rev-parse HEAD )
+}
+
+new_fixture_marketplace() {
+  local dest_dir="$1" plugin_repo_dir="$2" plugin_repo_sha="$3"
+  rm -rf "$dest_dir"; mkdir -p "$dest_dir"
+
+  new_fixture_skill "$dest_dir/plugins/alpha-skills/skills" "greet" "Says hello. Fixture skill for agent-extensions sync tests."
+
+  mkdir -p "$dest_dir/plugins/beta-mcp-stdio"
+  cat > "$dest_dir/plugins/beta-mcp-stdio/.mcp.json" <<'MCPEOF'
+{
+  "mcpServers": {
+    "fixture-stdio": {
+      "command": "node",
+      "args": ["server.js", "--port", "0"],
+      "env": { "FIXTURE_MODE": "stdio" }
+    }
+  }
+}
+MCPEOF
+
+  mkdir -p "$dest_dir/external_plugins/gamma-mcp-http"
+  cat > "$dest_dir/external_plugins/gamma-mcp-http/.mcp.json" <<'MCPEOF'
+{
+  "mcpServers": {
+    "fixture-http": {
+      "url": "https://fixture.example.com/mcp",
+      "headers": { "Authorization": "Bearer FIXTURE_TOKEN" }
+    }
+  }
+}
+MCPEOF
+
+  mkdir -p "$dest_dir/plugins/delta-malformed"
+  cat > "$dest_dir/plugins/delta-malformed/.mcp.json" <<'MCPEOF'
+{
+  "mcpServers": {
+    "fixture-bad": {
+      "transportKind": "carrier-pigeon"
+    }
+  }
+}
+MCPEOF
+
+  mkdir -p "$dest_dir/plugins/epsilon-invalid-json"
+  printf '%s' '{ "mcpServers": { "broken": } }' > "$dest_dir/plugins/epsilon-invalid-json/.mcp.json"
+
+  local repo_url="file:///${plugin_repo_dir#/}"
+  mkdir -p "$dest_dir/.claude-plugin"
+  jq -n --arg url "$repo_url" --arg sha "$plugin_repo_sha" '{
+    name: "fixture-marketplace",
+    plugins: [
+      { name: "alpha-skills",         source: "./plugins/alpha-skills" },
+      { name: "beta-mcp-stdio",       source: "./plugins/beta-mcp-stdio" },
+      { name: "gamma-mcp-http",       source: "./external_plugins/gamma-mcp-http" },
+      { name: "delta-malformed",      source: "./plugins/delta-malformed" },
+      { name: "epsilon-invalid-json", source: "./plugins/epsilon-invalid-json" },
+      { name: "zeta-repo-pinned",     source: { source: "url", url: $url, sha: $sha } },
+      { name: "eta-repo-subpath",     source: { source: "url", url: $url, sha: $sha, path: "nested/eta" } },
+      { name: "theta-repo-unpinned",  source: { source: "url", url: $url } }
+    ]
+  }' > "$dest_dir/.claude-plugin/marketplace.json"
+
+  ( cd "$dest_dir" \
+    && git init -q \
+    && git config user.email "fixture@agent-extensions.test" \
+    && git config user.name "agent-extensions fixture" \
+    && git config uploadpack.allowAnySHA1InWant true \
+    && git add -A && git commit -q -m "Fixture marketplace content" \
+    && git rev-parse HEAD )
+}
+```
+
+Mirror the PowerShell test's assertions into
+`bootstrap/tests/fixtures/marketplace-fixture.test.sh`, and update the
+`new_fixture_marketplace` call in `bootstrap/vendor-cache.test.sh`,
+`bootstrap/sync-external-codex.test.sh`, and
+`bootstrap/sync-external-antigravity.test.sh` the same way as Step 5.
+
+- [ ] **Step 7: Verify and commit**
+
+Run: `pwsh -NoProfile -File bootstrap/tests/fixtures/marketplace-fixture.test.ps1 && bash bootstrap/tests/fixtures/marketplace-fixture.test.sh`
+Expected: both PASS.
+
+```bash
+git add bootstrap/tests/fixtures/ bootstrap/vendor-cache.test.ps1 bootstrap/vendor-cache.test.sh bootstrap/sync-external-codex.test.ps1 bootstrap/sync-external-codex.test.sh bootstrap/sync-external-antigravity.test.ps1 bootstrap/sync-external-antigravity.test.sh
+git commit -m "Rebuild fixture marketplace to mirror real layouts and source kinds"
+```
+
+---
+
+### Task 13: Read declared plugins and resolve a plugin's source
+
+**Files:**
+- Modify: `bootstrap/sync.ps1` (insert after `Resolve-MarketplaceUrl`, ~line 55)
+- Modify: `bootstrap/sync.sh` (insert after `resolve_marketplace_url`, ~line 59)
+- Create: `bootstrap/plugin-source.test.ps1`
+- Create: `bootstrap/plugin-source.test.sh`
+
+**Interfaces:**
+- Consumes: `New-FixturePluginRepo`, `New-FixtureMarketplace` (Task 12).
+- Produces:
+  - `Get-DeclaredPlugins -Marketplace <object>` → array of objects with
+    `.Name` `[string]` and `.ResolvedCommit` `[string]` (empty string when
+    absent). Accepts both `"plugins": ["a"]` and
+    `"plugins": [{"name":"a","resolvedCommit":"<sha>"}]`.
+  - `Get-PluginSource -MarketplaceDir <string> -PluginName <string>` → object with
+    `.Kind` `[string]`, one of `inline` / `repo` / `missing`;
+    `.Path` `[string]` (inline, repo-relative);
+    `.Url` `.Sha` `.Ref` `.SubPath` `[string]` (repo; `""` when absent);
+    `.Error` `[string]` (set only when `.Kind -eq "missing"`).
+  - Bash: `get_declared_plugins <marketplace_json>` emits one
+    `{"name":...,"resolvedCommit":...}` object per line.
+    `get_plugin_source <marketplace_dir> <plugin_name>` emits one JSON object
+    with keys `kind,path,url,sha,ref,subpath,error`. Both always return 0;
+    `kind:"missing"` carries the reason in `error`.
+
+Two pure functions. No filesystem writes and no cloning — that is Task 14.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `bootstrap/plugin-source.test.ps1`:
+
+```powershell
+$ErrorActionPreference = "Stop"
+. "$PSScriptRoot\sync.ps1" -Import
+. "$PSScriptRoot\tests\fixtures\marketplace-fixture.ps1"
+
+$failures = @()
+$scratch = Join-Path ([IO.Path]::GetTempPath()) ("ae-src-" + [Guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $scratch -Force | Out-Null
+
+try {
+    $repoDir = Join-Path $scratch "plugin-repo"
+    $repoSha = New-FixturePluginRepo -DestDir $repoDir
+    $mpDir = Join-Path $scratch "marketplace"
+    New-FixtureMarketplace -DestDir $mpDir -PluginRepoDir $repoDir -PluginRepoSha $repoSha | Out-Null
+
+    # Get-DeclaredPlugins: plain string entries
+    $mpStrings = [PSCustomObject]@{ name = "m"; plugins = @("a","b") }
+    $got = @(Get-DeclaredPlugins -Marketplace $mpStrings)
+    if ($got.Count -ne 2)              { $failures += "string form: expected 2 plugins, got $($got.Count)" }
+    if ($got[0].Name -ne "a")          { $failures += "string form: expected Name 'a', got '$($got[0].Name)'" }
+    if ($got[0].ResolvedCommit -ne "") { $failures += "string form: ResolvedCommit should be empty" }
+
+    # Get-DeclaredPlugins: object entries, and a mixed array
+    $mpObjects = [PSCustomObject]@{ name = "m"; plugins = @(
+        [PSCustomObject]@{ name = "c"; resolvedCommit = "abc123" },
+        "d"
+    ) }
+    $got2 = @(Get-DeclaredPlugins -Marketplace $mpObjects)
+    if ($got2[0].Name -ne "c")                { $failures += "object form: expected Name 'c'" }
+    if ($got2[0].ResolvedCommit -ne "abc123") { $failures += "object form: expected ResolvedCommit 'abc123'" }
+    if ($got2[1].Name -ne "d")                { $failures += "mixed form: expected Name 'd'" }
+    if ($got2[1].ResolvedCommit -ne "")       { $failures += "mixed form: 'd' ResolvedCommit should be empty" }
+
+    # inline under plugins/
+    $s = Get-PluginSource -MarketplaceDir $mpDir -PluginName "alpha-skills"
+    if ($s.Kind -ne "inline")                 { $failures += "alpha: expected Kind inline, got '$($s.Kind)'" }
+    if ($s.Path -ne "./plugins/alpha-skills") { $failures += "alpha: wrong Path '$($s.Path)'" }
+
+    # inline under external_plugins/
+    $s = Get-PluginSource -MarketplaceDir $mpDir -PluginName "gamma-mcp-http"
+    if ($s.Kind -ne "inline")                            { $failures += "gamma: expected Kind inline" }
+    if ($s.Path -ne "./external_plugins/gamma-mcp-http") { $failures += "gamma: wrong Path '$($s.Path)'" }
+
+    # external repo pinned by sha
+    $s = Get-PluginSource -MarketplaceDir $mpDir -PluginName "zeta-repo-pinned"
+    if ($s.Kind -ne "repo")           { $failures += "zeta: expected Kind repo, got '$($s.Kind)'" }
+    if ($s.Sha -ne $repoSha)          { $failures += "zeta: expected Sha '$repoSha', got '$($s.Sha)'" }
+    if ($s.SubPath -ne "")            { $failures += "zeta: SubPath should be empty" }
+    if ($s.Url -notmatch '^file:///') { $failures += "zeta: expected file:/// Url, got '$($s.Url)'" }
+
+    # external repo with a subdirectory
+    $s = Get-PluginSource -MarketplaceDir $mpDir -PluginName "eta-repo-subpath"
+    if ($s.Kind -ne "repo")          { $failures += "eta: expected Kind repo" }
+    if ($s.SubPath -ne "nested/eta") { $failures += "eta: expected SubPath 'nested/eta', got '$($s.SubPath)'" }
+
+    # external repo, unpinned
+    $s = Get-PluginSource -MarketplaceDir $mpDir -PluginName "theta-repo-unpinned"
+    if ($s.Kind -ne "repo") { $failures += "theta: expected Kind repo" }
+    if ($s.Sha -ne "")      { $failures += "theta: Sha should be empty, got '$($s.Sha)'" }
+    if ($s.Ref -ne "")      { $failures += "theta: Ref should be empty, got '$($s.Ref)'" }
+
+    # declared by us but absent from the manifest
+    $s = Get-PluginSource -MarketplaceDir $mpDir -PluginName "omega-absent"
+    if ($s.Kind -ne "missing")             { $failures += "omega: expected Kind missing, got '$($s.Kind)'" }
+    if ($s.Error -notmatch "omega-absent") { $failures += "omega: Error must name the plugin, got '$($s.Error)'" }
+
+    # marketplace clone with no manifest at all
+    $bare = Join-Path $scratch "bare"
+    New-Item -ItemType Directory -Path $bare -Force | Out-Null
+    $s = Get-PluginSource -MarketplaceDir $bare -PluginName "anything"
+    if ($s.Kind -ne "missing")                 { $failures += "bare: expected Kind missing" }
+    if ($s.Error -notmatch "marketplace.json") { $failures += "bare: Error must name marketplace.json" }
+} finally {
+    Remove-Item $scratch -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+if ($failures.Count -gt 0) {
+    Write-Output "FAIL: plugin source resolution"
+    $failures | ForEach-Object { Write-Output "  - $_" }
+    exit 1
+}
+Write-Output "PASS: Get-DeclaredPlugins and Get-PluginSource handle all source kinds and both missing cases"
+```
+
+- [ ] **Step 2: Run it and watch it fail**
+
+Run: `pwsh -NoProfile -File bootstrap/plugin-source.test.ps1`
+Expected: FAIL — `Get-DeclaredPlugins` is not recognized.
+
+- [ ] **Step 3: Implement in `sync.ps1`**
+
+Insert immediately after the closing brace of `Resolve-MarketplaceUrl`:
+
+```powershell
+function Get-DeclaredPlugins {
+    param($Marketplace)
+    $out = @()
+    foreach ($entry in @($Marketplace.plugins)) {
+        if ($entry -is [string]) {
+            $out += [PSCustomObject]@{ Name = $entry; ResolvedCommit = "" }
+        } else {
+            $rc = ""
+            if ($entry.PSObject.Properties['resolvedCommit']) { $rc = [string]$entry.resolvedCommit }
+            $out += [PSCustomObject]@{ Name = [string]$entry.name; ResolvedCommit = $rc }
+        }
+    }
+    return $out
+}
+
+function New-PluginSourceResult {
+    param([string]$Kind, [string]$Path, [string]$Url, [string]$Sha, [string]$Ref, [string]$SubPath, [string]$ErrorText)
+    return [PSCustomObject]@{
+        Kind = $Kind; Path = $Path; Url = $Url; Sha = $Sha
+        Ref = $Ref; SubPath = $SubPath; Error = $ErrorText
+    }
+}
+
+function Get-PluginSource {
+    param([string]$MarketplaceDir, [string]$PluginName)
+
+    $manifestPath = Join-Path $MarketplaceDir ".claude-plugin\marketplace.json"
+    if (-not (Test-Path $manifestPath)) {
+        return New-PluginSourceResult -Kind "missing" -Path "" -Url "" -Sha "" -Ref "" -SubPath "" `
+            -ErrorText "no .claude-plugin/marketplace.json found at '$MarketplaceDir'"
+    }
+
+    try {
+        $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
+    } catch {
+        return New-PluginSourceResult -Kind "missing" -Path "" -Url "" -Sha "" -Ref "" -SubPath "" `
+            -ErrorText "could not parse '$manifestPath' — $($_.Exception.Message)"
+    }
+
+    $entry = @($manifest.plugins) | Where-Object { $_.name -eq $PluginName } | Select-Object -First 1
+    if (-not $entry) {
+        return New-PluginSourceResult -Kind "missing" -Path "" -Url "" -Sha "" -Ref "" -SubPath "" `
+            -ErrorText "plugin '$PluginName' is not declared in '$manifestPath'"
+    }
+
+    if ($entry.source -is [string]) {
+        return New-PluginSourceResult -Kind "inline" -Path ([string]$entry.source) -Url "" -Sha "" -Ref "" -SubPath "" -ErrorText ""
+    }
+
+    $src = $entry.source
+    $field = {
+        param($Name)
+        if ($src.PSObject.Properties[$Name]) { return [string]$src.$Name }
+        return ""
+    }
+    $kindField = & $field 'source'
+    if ($kindField -ne 'url') {
+        return New-PluginSourceResult -Kind "missing" -Path "" -Url "" -Sha "" -Ref "" -SubPath "" `
+            -ErrorText "plugin '$PluginName' declares unsupported source kind '$kindField'"
+    }
+    return New-PluginSourceResult -Kind "repo" -Path "" `
+        -Url (& $field 'url') -Sha (& $field 'sha') -Ref (& $field 'ref') -SubPath (& $field 'path') -ErrorText ""
+}
+```
+
+- [ ] **Step 4: Run the test and watch it pass**
+
+Run: `pwsh -NoProfile -File bootstrap/plugin-source.test.ps1`
+Expected: `PASS: Get-DeclaredPlugins and Get-PluginSource handle all source kinds and both missing cases`
+
+- [ ] **Step 5: Implement the bash equivalents**
+
+Insert after `resolve_marketplace_url` in `bootstrap/sync.sh`:
+
+```bash
+get_declared_plugins() {
+  local mp_json="$1"
+  echo "$mp_json" | jq -c '.plugins[]? | if type == "string" then {name: ., resolvedCommit: ""} else {name: .name, resolvedCommit: (.resolvedCommit // "")} end'
+}
+
+plugin_source_missing() {
+  jq -n --arg e "$1" '{kind:"missing",path:"",url:"",sha:"",ref:"",subpath:"",error:$e}'
+}
+
+get_plugin_source() {
+  local marketplace_dir="$1" plugin_name="$2"
+  local manifest="$marketplace_dir/.claude-plugin/marketplace.json"
+
+  if [ ! -f "$manifest" ]; then
+    plugin_source_missing "no .claude-plugin/marketplace.json found at '$marketplace_dir'"
+    return 0
+  fi
+  if ! jq -e . "$manifest" >/dev/null 2>&1; then
+    plugin_source_missing "could not parse '$manifest'"
+    return 0
+  fi
+
+  jq -c --arg n "$plugin_name" --arg m "$manifest" '
+    [.plugins[]? | select(.name == $n)] as $matches
+    | if ($matches | length) == 0 then
+        {kind:"missing",path:"",url:"",sha:"",ref:"",subpath:"",
+         error:("plugin \u0027" + $n + "\u0027 is not declared in \u0027" + $m + "\u0027")}
+      else ($matches[0]) as $e
+      | if ($e.source | type) == "string" then
+          {kind:"inline",path:$e.source,url:"",sha:"",ref:"",subpath:"",error:""}
+        elif $e.source.source == "url" then
+          {kind:"repo",path:"",url:($e.source.url // ""),sha:($e.source.sha // ""),
+           ref:($e.source.ref // ""),subpath:($e.source.path // ""),error:""}
+        else
+          {kind:"missing",path:"",url:"",sha:"",ref:"",subpath:"",
+           error:("plugin \u0027" + $n + "\u0027 declares unsupported source kind")}
+        end
+      end' "$manifest"
+}
+```
+
+Mirror every assertion from the PowerShell test into
+`bootstrap/plugin-source.test.sh`, reading fields with `jq -r '.kind'`,
+`jq -r '.sha'`, and so on.
+
+- [ ] **Step 6: Verify both and commit**
+
+Run: `pwsh -NoProfile -File bootstrap/plugin-source.test.ps1 && bash bootstrap/plugin-source.test.sh`
+Expected: both PASS.
+
+```bash
+git add bootstrap/sync.ps1 bootstrap/sync.sh bootstrap/plugin-source.test.ps1 bootstrap/plugin-source.test.sh
+git commit -m "Resolve plugin location from the marketplace manifest"
+```
+
+---
+
+### Task 14: Clone external-repo plugins into the vendor cache
+
+**Files:**
+- Modify: `bootstrap/sync.ps1` (insert after `Sync-VendorCache`)
+- Modify: `bootstrap/sync.sh` (insert after `sync_vendor_cache`)
+- Create: `bootstrap/plugin-repo.test.ps1`
+- Create: `bootstrap/plugin-repo.test.sh`
+
+**Interfaces:**
+- Consumes: `Get-PluginSource` (Task 13); fixtures from Task 12.
+- Produces:
+  - `Sync-PluginRepo -PluginReposDir <string> -MarketplaceName <string> -PluginName <string> -Source <object> -PinnedCommit <string>`
+    → object with `.Dir` `[string]` (the plugin root, including `SubPath`
+    when declared), `.ResolvedSha` `[string]`, `.Error` `[string]` (empty on
+    success; `.Dir` is `""` when `.Error` is set). Never throws.
+  - Bash: `sync_plugin_repo <plugin_repos_dir> <marketplace_name> <plugin_name> <source_json> <pinned_commit>`
+    emits one JSON object `{"dir":...,"resolvedSha":...,"error":...}` and
+    always returns 0.
+
+Checkout precedence, highest first: `PinnedCommit` (a `resolvedCommit`
+previously recorded by Task 15), then the manifest's `Sha`, then its `Ref`,
+then the remote's default `HEAD`. Clones live in
+`.vendor-cache/_plugins/<marketplace>/<plugin>/`, kept separate from the
+marketplace clones in `.vendor-cache/<marketplace>/`.
+
+Idempotency mirrors `Sync-VendorCache`: if the clone already sits at the
+wanted commit, do nothing. An unpinned plugin (no `PinnedCommit`, no `Sha`,
+no `Ref`) has no wanted commit to compare against, so it re-fetches `HEAD`
+every run until Task 15 records a `resolvedCommit` for it.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `bootstrap/plugin-repo.test.ps1`:
+
+```powershell
+$ErrorActionPreference = "Stop"
+. "$PSScriptRoot\sync.ps1" -Import
+. "$PSScriptRoot\tests\fixtures\marketplace-fixture.ps1"
+
+$failures = @()
+$scratch = Join-Path ([IO.Path]::GetTempPath()) ("ae-repo-" + [Guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $scratch -Force | Out-Null
+
+try {
+    $repoDir = Join-Path $scratch "plugin-repo"
+    $repoSha = New-FixturePluginRepo -DestDir $repoDir
+    $mpDir = Join-Path $scratch "marketplace"
+    New-FixtureMarketplace -DestDir $mpDir -PluginRepoDir $repoDir -PluginRepoSha $repoSha | Out-Null
+    $reposDir = Join-Path $scratch "_plugins"
+
+    # pinned by manifest sha
+    $src = Get-PluginSource -MarketplaceDir $mpDir -PluginName "zeta-repo-pinned"
+    $r = Sync-PluginRepo -PluginReposDir $reposDir -MarketplaceName "fx" -PluginName "zeta-repo-pinned" -Source $src -PinnedCommit ""
+    if ($r.Error -ne "")            { $failures += "zeta: unexpected error '$($r.Error)'" }
+    if ($r.ResolvedSha -ne $repoSha){ $failures += "zeta: expected sha '$repoSha', got '$($r.ResolvedSha)'" }
+    if (-not (Test-Path (Join-Path $r.Dir "skills\remote-greet\SKILL.md"))) { $failures += "zeta: root skill not present in clone" }
+
+    # subpath
+    $src = Get-PluginSource -MarketplaceDir $mpDir -PluginName "eta-repo-subpath"
+    $r = Sync-PluginRepo -PluginReposDir $reposDir -MarketplaceName "fx" -PluginName "eta-repo-subpath" -Source $src -PinnedCommit ""
+    if ($r.Error -ne "") { $failures += "eta: unexpected error '$($r.Error)'" }
+    if (-not (Test-Path (Join-Path $r.Dir "skills\eta-greet\SKILL.md"))) { $failures += "eta: Dir must point at the nested/eta subdirectory" }
+    if ($r.Dir -notmatch 'eta$') { $failures += "eta: Dir should end at the subpath, got '$($r.Dir)'" }
+
+    # unpinned resolves to HEAD and reports the sha it landed on
+    $src = Get-PluginSource -MarketplaceDir $mpDir -PluginName "theta-repo-unpinned"
+    $r = Sync-PluginRepo -PluginReposDir $reposDir -MarketplaceName "fx" -PluginName "theta-repo-unpinned" -Source $src -PinnedCommit ""
+    if ($r.Error -ne "")             { $failures += "theta: unexpected error '$($r.Error)'" }
+    if ($r.ResolvedSha -ne $repoSha) { $failures += "theta: expected HEAD sha '$repoSha', got '$($r.ResolvedSha)'" }
+
+    # idempotent: second call on an already-correct clone succeeds
+    $r2 = Sync-PluginRepo -PluginReposDir $reposDir -MarketplaceName "fx" -PluginName "zeta-repo-pinned" -Source (Get-PluginSource -MarketplaceDir $mpDir -PluginName "zeta-repo-pinned") -PinnedCommit ""
+    if ($r2.Error -ne "")             { $failures += "zeta rerun: unexpected error '$($r2.Error)'" }
+    if ($r2.ResolvedSha -ne $repoSha) { $failures += "zeta rerun: sha changed" }
+
+    # PinnedCommit wins over the manifest sha
+    $r3 = Sync-PluginRepo -PluginReposDir $reposDir -MarketplaceName "fx" -PluginName "theta-repo-unpinned" -Source $src -PinnedCommit $repoSha
+    if ($r3.Error -ne "")             { $failures += "theta pinned: unexpected error '$($r3.Error)'" }
+    if ($r3.ResolvedSha -ne $repoSha) { $failures += "theta pinned: expected '$repoSha'" }
+
+    # unreachable commit is a reported error, never a silent success
+    $bogus = "0123456789012345678901234567890123456789"
+    $badSrc = [PSCustomObject]@{ Kind = "repo"; Path = ""; Url = $src.Url; Sha = $bogus; Ref = ""; SubPath = ""; Error = "" }
+    $r4 = Sync-PluginRepo -PluginReposDir $reposDir -MarketplaceName "fx" -PluginName "bad-sha" -Source $badSrc -PinnedCommit ""
+    if ($r4.Error -eq "")        { $failures += "bad-sha: expected a reported error, got none" }
+    if ($r4.Dir -ne "")          { $failures += "bad-sha: Dir must be empty when Error is set" }
+    if ($r4.Error -notmatch $bogus) { $failures += "bad-sha: error must name the unreachable commit" }
+
+    # missing subpath is a reported error
+    $subSrc = [PSCustomObject]@{ Kind = "repo"; Path = ""; Url = $src.Url; Sha = $repoSha; Ref = ""; SubPath = "no/such/dir"; Error = "" }
+    $r5 = Sync-PluginRepo -PluginReposDir $reposDir -MarketplaceName "fx" -PluginName "bad-subpath" -Source $subSrc -PinnedCommit ""
+    if ($r5.Error -eq "")                    { $failures += "bad-subpath: expected a reported error" }
+    if ($r5.Error -notmatch "no/such/dir")   { $failures += "bad-subpath: error must name the missing subdirectory" }
+} finally {
+    Remove-Item $scratch -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+if ($failures.Count -gt 0) {
+    Write-Output "FAIL: external plugin repo sync"
+    $failures | ForEach-Object { Write-Output "  - $_" }
+    exit 1
+}
+Write-Output "PASS: Sync-PluginRepo handles sha, ref, subpath, unpinned HEAD, idempotency, and reports unreachable commits"
+```
+
+- [ ] **Step 2: Run it and watch it fail**
+
+Run: `pwsh -NoProfile -File bootstrap/plugin-repo.test.ps1`
+Expected: FAIL — `Sync-PluginRepo` is not recognized.
+
+- [ ] **Step 3: Implement in `sync.ps1`**
+
+Insert after the closing brace of `Sync-VendorCache`:
+
+```powershell
+function Sync-PluginRepo {
+    param(
+        [string]$PluginReposDir, [string]$MarketplaceName, [string]$PluginName,
+        $Source, [string]$PinnedCommit
+    )
+
+    $fail = { param($m) [PSCustomObject]@{ Dir = ""; ResolvedSha = ""; Error = $m } }
+
+    if ([string]::IsNullOrWhiteSpace($Source.Url)) {
+        return & $fail "plugin '$PluginName' (from '$MarketplaceName'): external source declares no url"
+    }
+
+    $wanted = ""
+    if (-not [string]::IsNullOrWhiteSpace($PinnedCommit)) { $wanted = $PinnedCommit }
+    elseif (-not [string]::IsNullOrWhiteSpace($Source.Sha)) { $wanted = $Source.Sha }
+    elseif (-not [string]::IsNullOrWhiteSpace($Source.Ref)) { $wanted = $Source.Ref }
+
+    $clone = Join-Path $PluginReposDir "$MarketplaceName\$PluginName"
+
+    $current = ""
+    if (Test-Path (Join-Path $clone ".git")) {
+        Push-Location $clone
+        try { $current = (& git rev-parse HEAD 2>$null | Out-String).Trim() } finally { Pop-Location }
+    }
+
+    $needsFetch = $true
+    if ($current -ne "" -and $wanted -ne "" -and $current -eq $wanted) { $needsFetch = $false }
+
+    if ($needsFetch) {
+        if (Test-Path $clone) {
+            try { Remove-Item $clone -Recurse -Force }
+            catch { return & $fail "plugin '$PluginName' (from '$MarketplaceName'): could not clear '$clone' — $($_.Exception.Message)" }
+        }
+        try { New-Item -ItemType Directory -Path $clone -Force | Out-Null }
+        catch { return & $fail "plugin '$PluginName' (from '$MarketplaceName'): could not create '$clone' — $($_.Exception.Message)" }
+
+        $fetchTarget = if ($wanted -ne "") { $wanted } else { "HEAD" }
+        Push-Location $clone
+        try {
+            & git init -q 2>&1 | Out-Null
+            & git remote add origin $Source.Url 2>&1 | Out-Null
+            & git fetch --depth 1 origin $fetchTarget 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                return & $fail "plugin '$PluginName' (from '$MarketplaceName'): could not fetch '$fetchTarget' from '$($Source.Url)'"
+            }
+            & git checkout -q FETCH_HEAD 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                return & $fail "plugin '$PluginName' (from '$MarketplaceName'): could not check out '$fetchTarget'"
+            }
+        } finally { Pop-Location }
+    }
+
+    Push-Location $clone
+    try { $resolved = (& git rev-parse HEAD 2>$null | Out-String).Trim() } finally { Pop-Location }
+    if ([string]::IsNullOrWhiteSpace($resolved)) {
+        return & $fail "plugin '$PluginName' (from '$MarketplaceName'): clone at '$clone' has no resolvable HEAD"
+    }
+
+    $dir = $clone
+    if (-not [string]::IsNullOrWhiteSpace($Source.SubPath)) {
+        $dir = Join-Path $clone ($Source.SubPath -replace '/','\')
+        if (-not (Test-Path $dir)) {
+            return & $fail "plugin '$PluginName' (from '$MarketplaceName'): declared subdirectory '$($Source.SubPath)' does not exist in the clone"
+        }
+    }
+
+    return [PSCustomObject]@{ Dir = $dir; ResolvedSha = $resolved; Error = "" }
+}
+```
+
+- [ ] **Step 4: Run the test and watch it pass**
+
+Run: `pwsh -NoProfile -File bootstrap/plugin-repo.test.ps1`
+Expected: `PASS: Sync-PluginRepo handles sha, ref, subpath, unpinned HEAD, idempotency, and reports unreachable commits`
+
+- [ ] **Step 5: Implement the bash equivalent**
+
+Insert after `sync_vendor_cache` in `bootstrap/sync.sh`:
+
+```bash
+plugin_repo_result() {
+  jq -n --arg d "$1" --arg s "$2" --arg e "$3" '{dir:$d,resolvedSha:$s,error:$e}'
+}
+
+sync_plugin_repo() {
+  local plugin_repos_dir="$1" marketplace_name="$2" plugin_name="$3" source_json="$4" pinned_commit="$5"
+  local url sha ref subpath wanted clone current fetch_target resolved dir
+
+  url="$(echo "$source_json" | jq -r '.url // ""')"
+  sha="$(echo "$source_json" | jq -r '.sha // ""')"
+  ref="$(echo "$source_json" | jq -r '.ref // ""')"
+  subpath="$(echo "$source_json" | jq -r '.subpath // ""')"
+
+  if [ -z "$url" ]; then
+    plugin_repo_result "" "" "plugin '$plugin_name' (from '$marketplace_name'): external source declares no url"
+    return 0
+  fi
+
+  wanted=""
+  if   [ -n "$pinned_commit" ]; then wanted="$pinned_commit"
+  elif [ -n "$sha" ];           then wanted="$sha"
+  elif [ -n "$ref" ];           then wanted="$ref"
+  fi
+
+  clone="$plugin_repos_dir/$marketplace_name/$plugin_name"
+  current=""
+  [ -d "$clone/.git" ] && current="$(cd "$clone" && git rev-parse HEAD 2>/dev/null || true)"
+
+  if [ -z "$current" ] || [ -z "$wanted" ] || [ "$current" != "$wanted" ]; then
+    rm -rf "$clone"
+    if ! mkdir -p "$clone"; then
+      plugin_repo_result "" "" "plugin '$plugin_name' (from '$marketplace_name'): could not create '$clone'"
+      return 0
+    fi
+    fetch_target="$wanted"; [ -n "$fetch_target" ] || fetch_target="HEAD"
+    if ! ( cd "$clone" \
+           && git init -q \
+           && git remote add origin "$url" \
+           && git fetch --depth 1 origin "$fetch_target" >/dev/null 2>&1 \
+           && git checkout -q FETCH_HEAD ); then
+      plugin_repo_result "" "" "plugin '$plugin_name' (from '$marketplace_name'): could not fetch '$fetch_target' from '$url'"
+      return 0
+    fi
+  fi
+
+  resolved="$(cd "$clone" && git rev-parse HEAD 2>/dev/null || true)"
+  if [ -z "$resolved" ]; then
+    plugin_repo_result "" "" "plugin '$plugin_name' (from '$marketplace_name'): clone at '$clone' has no resolvable HEAD"
+    return 0
+  fi
+
+  dir="$clone"
+  if [ -n "$subpath" ]; then
+    dir="$clone/$subpath"
+    if [ ! -d "$dir" ]; then
+      plugin_repo_result "" "" "plugin '$plugin_name' (from '$marketplace_name'): declared subdirectory '$subpath' does not exist in the clone"
+      return 0
+    fi
+  fi
+
+  plugin_repo_result "$dir" "$resolved" ""
+}
+```
+
+Mirror every PowerShell assertion into `bootstrap/plugin-repo.test.sh`.
+
+- [ ] **Step 6: Verify both and commit**
+
+Run: `pwsh -NoProfile -File bootstrap/plugin-repo.test.ps1 && bash bootstrap/plugin-repo.test.sh`
+Expected: both PASS.
+
+```bash
+git add bootstrap/sync.ps1 bootstrap/sync.sh bootstrap/plugin-repo.test.ps1 bootstrap/plugin-repo.test.sh
+git commit -m "Clone external-repo plugins with sha, ref, and subpath support"
+```
+
+---
+
+### Task 15: Pin-on-first-use — record `resolvedCommit`
+
+**Files:**
+- Modify: `bootstrap/sync.ps1` (insert after `Sync-PluginRepo`)
+- Modify: `bootstrap/sync.sh` (insert after `sync_plugin_repo`)
+- Create: `bootstrap/resolved-commit.test.ps1`
+- Create: `bootstrap/resolved-commit.test.sh`
+
+**Interfaces:**
+- Consumes: nothing beyond the JSON file shape.
+- Produces:
+  - `Save-ResolvedCommit -RepoRoot <string> -MarketplaceName <string> -PluginName <string> -Sha <string>`
+    → `[string]` empty on success, or an error message. Rewrites
+    `bootstrap/external-marketplaces.json`, converting that plugin's entry
+    from a bare string into `{"name":...,"resolvedCommit":...}`. Every other
+    entry keeps its existing form byte-for-byte in meaning.
+  - Bash: `save_resolved_commit <repo_root> <marketplace_name> <plugin_name> <sha>`
+    returns 0 on success, 1 with a message on stderr on failure.
+
+Only ever called for a plugin whose manifest declares neither `sha` nor
+`ref`. A plugin already pinned upstream needs no `resolvedCommit`, and
+writing one would silently override an upstream re-pin.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `bootstrap/resolved-commit.test.ps1`:
+
+```powershell
+$ErrorActionPreference = "Stop"
+. "$PSScriptRoot\sync.ps1" -Import
+
+$failures = @()
+$scratch = Join-Path ([IO.Path]::GetTempPath()) ("ae-pin-" + [Guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path (Join-Path $scratch "bootstrap") -Force | Out-Null
+$declPath = Join-Path $scratch "bootstrap\external-marketplaces.json"
+
+$seed = @'
+{
+  "marketplaces": [
+    { "name": "mk-one", "repo": "o/one", "pinnedCommit": "aaa", "plugins": ["p-one", "p-two"] },
+    { "name": "mk-two", "repo": "o/two", "pinnedCommit": "bbb", "plugins": ["p-three"] }
+  ]
+}
+'@
+
+try {
+    Set-Content -Path $declPath -Value $seed
+    $sha = "1111111111111111111111111111111111111111"
+
+    $err = Save-ResolvedCommit -RepoRoot $scratch -MarketplaceName "mk-one" -PluginName "p-two" -Sha $sha
+    if ($err -ne "") { $failures += "unexpected error: '$err'" }
+
+    $after = Get-Content $declPath -Raw | ConvertFrom-Json
+    $one = @($after.marketplaces) | Where-Object { $_.name -eq "mk-one" }
+    $two = @($after.marketplaces) | Where-Object { $_.name -eq "mk-two" }
+
+    $pTwo = @($one.plugins) | Where-Object { $_ -isnot [string] -and $_.name -eq "p-two" }
+    if (-not $pTwo)                          { $failures += "p-two was not converted to an object entry" }
+    elseif ($pTwo.resolvedCommit -ne $sha)   { $failures += "p-two resolvedCommit wrong: '$($pTwo.resolvedCommit)'" }
+
+    $pOne = @($one.plugins) | Where-Object { $_ -is [string] -and $_ -eq "p-one" }
+    if (-not $pOne) { $failures += "p-one should remain an untouched string entry" }
+
+    if (@($one.plugins).Count -ne 2) { $failures += "mk-one should still declare exactly 2 plugins" }
+    if (@($two.plugins).Count -ne 1 -or @($two.plugins)[0] -ne "p-three") { $failures += "mk-two must be untouched" }
+    if ($one.pinnedCommit -ne "aaa") { $failures += "marketplace pinnedCommit must be preserved" }
+
+    # updating an existing resolvedCommit replaces it rather than duplicating
+    $sha2 = "2222222222222222222222222222222222222222"
+    $err = Save-ResolvedCommit -RepoRoot $scratch -MarketplaceName "mk-one" -PluginName "p-two" -Sha $sha2
+    if ($err -ne "") { $failures += "second save errored: '$err'" }
+    $after2 = Get-Content $declPath -Raw | ConvertFrom-Json
+    $one2 = @($after2.marketplaces) | Where-Object { $_.name -eq "mk-one" }
+    if (@($one2.plugins).Count -ne 2) { $failures += "second save duplicated an entry" }
+    $pTwo2 = @($one2.plugins) | Where-Object { $_ -isnot [string] -and $_.name -eq "p-two" }
+    if ($pTwo2.resolvedCommit -ne $sha2) { $failures += "second save did not replace the sha" }
+
+    # unknown marketplace or plugin is a reported error, not a silent no-op
+    $err = Save-ResolvedCommit -RepoRoot $scratch -MarketplaceName "nope" -PluginName "p-two" -Sha $sha
+    if ($err -eq "") { $failures += "unknown marketplace should be an error" }
+    $err = Save-ResolvedCommit -RepoRoot $scratch -MarketplaceName "mk-one" -PluginName "nope" -Sha $sha
+    if ($err -eq "") { $failures += "unknown plugin should be an error" }
+} finally {
+    Remove-Item $scratch -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+if ($failures.Count -gt 0) {
+    Write-Output "FAIL: resolved-commit persistence"
+    $failures | ForEach-Object { Write-Output "  - $_" }
+    exit 1
+}
+Write-Output "PASS: Save-ResolvedCommit pins one plugin, preserves the rest, replaces on update, errors on unknown names"
+```
+
+- [ ] **Step 2: Run it and watch it fail**
+
+Run: `pwsh -NoProfile -File bootstrap/resolved-commit.test.ps1`
+Expected: FAIL — `Save-ResolvedCommit` is not recognized.
+
+- [ ] **Step 3: Implement in `sync.ps1`**
+
+Insert after the closing brace of `Sync-PluginRepo`:
+
+```powershell
+function Save-ResolvedCommit {
+    param([string]$RepoRoot, [string]$MarketplaceName, [string]$PluginName, [string]$Sha)
+
+    $path = Join-Path $RepoRoot "bootstrap\external-marketplaces.json"
+    if (-not (Test-Path $path)) { return "cannot record resolved commit: '$path' does not exist" }
+
+    try { $doc = Get-Content $path -Raw | ConvertFrom-Json }
+    catch { return "cannot record resolved commit: could not parse '$path' — $($_.Exception.Message)" }
+
+    $mp = @($doc.marketplaces) | Where-Object { $_.name -eq $MarketplaceName } | Select-Object -First 1
+    if (-not $mp) { return "cannot record resolved commit: marketplace '$MarketplaceName' is not declared in '$path'" }
+
+    $found = $false
+    $newPlugins = @()
+    foreach ($entry in @($mp.plugins)) {
+        $name = if ($entry -is [string]) { $entry } else { [string]$entry.name }
+        if ($name -eq $PluginName) {
+            $found = $true
+            $newPlugins += [PSCustomObject]@{ name = $name; resolvedCommit = $Sha }
+        } else {
+            $newPlugins += $entry
+        }
+    }
+    if (-not $found) { return "cannot record resolved commit: plugin '$PluginName' is not declared under marketplace '$MarketplaceName'" }
+
+    $mp.plugins = $newPlugins
+    try {
+        Set-Content -Path $path -Value ($doc | ConvertTo-Json -Depth 12)
+    } catch {
+        return "cannot record resolved commit: failed to write '$path' — $($_.Exception.Message)"
+    }
+    return ""
+}
+```
+
+- [ ] **Step 4: Run the test and watch it pass**
+
+Run: `pwsh -NoProfile -File bootstrap/resolved-commit.test.ps1`
+Expected: `PASS: Save-ResolvedCommit pins one plugin, preserves the rest, replaces on update, errors on unknown names`
+
+- [ ] **Step 5: Implement the bash equivalent**
+
+Insert after `sync_plugin_repo` in `bootstrap/sync.sh`:
+
+```bash
+save_resolved_commit() {
+  local repo_root="$1" marketplace_name="$2" plugin_name="$3" sha="$4"
+  local path="$repo_root/bootstrap/external-marketplaces.json"
+  local tmp
+
+  if [ ! -f "$path" ]; then
+    echo "cannot record resolved commit: '$path' does not exist" >&2; return 1
+  fi
+  if ! jq -e . "$path" >/dev/null 2>&1; then
+    echo "cannot record resolved commit: could not parse '$path'" >&2; return 1
+  fi
+  if ! jq -e --arg m "$marketplace_name" '.marketplaces[] | select(.name == $m)' "$path" >/dev/null 2>&1; then
+    echo "cannot record resolved commit: marketplace '$marketplace_name' is not declared in '$path'" >&2; return 1
+  fi
+  if ! jq -e --arg m "$marketplace_name" --arg p "$plugin_name" \
+        '.marketplaces[] | select(.name == $m) | .plugins[] | select((if type=="string" then . else .name end) == $p)' \
+        "$path" >/dev/null 2>&1; then
+    echo "cannot record resolved commit: plugin '$plugin_name' is not declared under marketplace '$marketplace_name'" >&2; return 1
+  fi
+
+  tmp="$(mktemp)"
+  if ! jq --arg m "$marketplace_name" --arg p "$plugin_name" --arg s "$sha" '
+    .marketplaces |= map(
+      if .name == $m then
+        .plugins |= map(
+          if (if type == "string" then . else .name end) == $p
+          then {name: $p, resolvedCommit: $s}
+          else . end)
+      else . end)' "$path" > "$tmp"; then
+    rm -f "$tmp"
+    echo "cannot record resolved commit: failed to rewrite '$path'" >&2; return 1
+  fi
+  mv "$tmp" "$path"
+}
+```
+
+- [ ] **Step 6: Verify both and commit**
+
+Run: `pwsh -NoProfile -File bootstrap/resolved-commit.test.ps1 && bash bootstrap/resolved-commit.test.sh`
+Expected: both PASS.
+
+```bash
+git add bootstrap/sync.ps1 bootstrap/sync.sh bootstrap/resolved-commit.test.ps1 bootstrap/resolved-commit.test.sh
+git commit -m "Record resolvedCommit so unpinned external plugins stop floating"
+```
+
+---
+
+### Task 16: Route both sync loops through manifest resolution
+
+**Files:**
+- Modify: `bootstrap/sync.ps1` — `Sync-ExternalCodexContent` (~line 282),
+  `Sync-ExternalAntigravityContent` (~line 348)
+- Modify: `bootstrap/sync.sh` — `sync_external_codex_content` (~line 276),
+  `sync_external_antigravity_content` (~line 335)
+- Modify: `bootstrap/sync-external-codex.test.ps1`, `.sh`
+- Modify: `bootstrap/sync-external-antigravity.test.ps1`, `.sh`
+
+**Interfaces:**
+- Consumes: `Get-DeclaredPlugins`, `Get-PluginSource` (Task 13),
+  `Sync-PluginRepo` (Task 14), `Save-ResolvedCommit` (Task 15).
+- Produces: `Resolve-PluginDir -RepoRoot <string> -VendorCacheDir <string> -Marketplace <object> -DeclaredPlugin <object>`
+  → object with `.Dir` `[string]` and `.Failure` `[string]` (exactly one is
+  non-empty). Bash: `resolve_plugin_dir <repo_root> <vendor_cache_dir> <mp_json> <declared_plugin_json>`
+  emits `{"dir":...,"failure":...}` and always returns 0.
+
+This is the task that fixes the reported bug. Both loops currently compute
+`$pluginDir = Join-Path $VendorCacheDir "$($mp.name)\$pluginName"` and
+silently `continue` when it does not exist. Both now call
+`Resolve-PluginDir` and append `.Failure` to `$failures` when set.
+
+- [ ] **Step 1: Extend the two sync tests to demand the new behaviour**
+
+In `bootstrap/sync-external-codex.test.ps1`, after the existing assertions,
+add:
+
+```powershell
+# external-repo plugins contribute their skills too
+if (-not (Test-Path (Join-Path $codexSkillsDir "remote-greet"))) {
+    $failures += "zeta-repo-pinned's 'remote-greet' skill was not linked from its external repo"
+}
+if (-not (Test-Path (Join-Path $codexSkillsDir "eta-greet"))) {
+    $failures += "eta-repo-subpath's 'eta-greet' skill was not linked from its repo subdirectory"
+}
+# a declared plugin absent from the manifest is a NAMED failure, never a silent skip
+$omegaReported = @($result) | Where-Object { $_ -match "omega-absent" }
+if (-not $omegaReported) {
+    $failures += "omega-absent is declared but not in the manifest; it must be reported as a failure"
+}
+```
+
+The suite's declaration file must declare `omega-absent` alongside the
+fixture's real plugins so the negative case has something to trigger on. Add
+it to the `plugins` array the test writes into its scratch
+`bootstrap/external-marketplaces.json`.
+
+Add the equivalent assertions to
+`bootstrap/sync-external-antigravity.test.ps1`, checking the staged plugin
+directory for `remote-greet` and `eta-greet` rather than the Codex skills
+directory.
+
+- [ ] **Step 2: Run both and watch them fail**
+
+Run: `pwsh -NoProfile -File bootstrap/sync-external-codex.test.ps1`
+Expected: FAIL — `remote-greet` not linked, `omega-absent` not reported.
+(These suites are already failing from Task 12 Step 5; this step adds the
+assertions that define done.)
+
+- [ ] **Step 3: Add `Resolve-PluginDir` to `sync.ps1`**
+
+Insert after `Save-ResolvedCommit`:
+
+```powershell
+function Resolve-PluginDir {
+    param([string]$RepoRoot, [string]$VendorCacheDir, $Marketplace, $DeclaredPlugin)
+
+    $name = $DeclaredPlugin.Name
+    $marketplaceDir = Join-Path $VendorCacheDir $Marketplace.name
+    $src = Get-PluginSource -MarketplaceDir $marketplaceDir -PluginName $name
+
+    if ($src.Kind -eq "missing") {
+        return [PSCustomObject]@{ Dir = ""; Failure = "Plugin '$name' (from '$($Marketplace.name)'): $($src.Error)" }
+    }
+
+    if ($src.Kind -eq "inline") {
+        $rel = $src.Path -replace '^\./','' -replace '/','\'
+        $dir = Join-Path $marketplaceDir $rel
+        if (-not (Test-Path $dir)) {
+            return [PSCustomObject]@{ Dir = ""; Failure = "Plugin '$name' (from '$($Marketplace.name)'): declared inline path '$($src.Path)' does not exist in the marketplace clone" }
+        }
+        return [PSCustomObject]@{ Dir = $dir; Failure = "" }
+    }
+
+    $pluginReposDir = Join-Path $VendorCacheDir "_plugins"
+    $r = Sync-PluginRepo -PluginReposDir $pluginReposDir -MarketplaceName $Marketplace.name `
+        -PluginName $name -Source $src -PinnedCommit $DeclaredPlugin.ResolvedCommit
+    if ($r.Error -ne "") {
+        return [PSCustomObject]@{ Dir = ""; Failure = $r.Error }
+    }
+
+    # Pin on first use: only for plugins the manifest leaves unpinned.
+    if ([string]::IsNullOrWhiteSpace($src.Sha) -and [string]::IsNullOrWhiteSpace($src.Ref) `
+        -and [string]::IsNullOrWhiteSpace($DeclaredPlugin.ResolvedCommit)) {
+        $saveErr = Save-ResolvedCommit -RepoRoot $RepoRoot -MarketplaceName $Marketplace.name -PluginName $name -Sha $r.ResolvedSha
+        if ($saveErr -ne "") {
+            return [PSCustomObject]@{ Dir = ""; Failure = $saveErr }
+        }
+        # Write-Host, NOT Write-Output: this function's return value is captured by
+        # its caller, and uncaptured pipeline output would be appended to the returned
+        # object. This is the exact bug Task 10 hit with Sync-ClaudeCodeMarketplace.
+        Write-Host "Pinned '$name' (from '$($Marketplace.name)') to $($r.ResolvedSha)"
+    }
+
+    return [PSCustomObject]@{ Dir = $r.Dir; Failure = "" }
+}
+```
+
+- [ ] **Step 4: Rewire `Sync-ExternalCodexContent`**
+
+Replace its inner `foreach` header. Before:
+
+```powershell
+        foreach ($pluginName in $mp.plugins) {
+            $pluginDir = Join-Path $VendorCacheDir "$($mp.name)\$pluginName"
+```
+
+After:
+
+```powershell
+        foreach ($declared in (Get-DeclaredPlugins -Marketplace $mp)) {
+            $pluginName = $declared.Name
+            $resolved = Resolve-PluginDir -RepoRoot $RepoRoot -VendorCacheDir $VendorCacheDir -Marketplace $mp -DeclaredPlugin $declared
+            if ($resolved.Failure -ne "") { $failures += $resolved.Failure; continue }
+            $pluginDir = $resolved.Dir
+```
+
+The rest of the loop body is unchanged — it already reads `$pluginDir\skills`
+and `$pluginDir\.mcp.json`.
+
+- [ ] **Step 5: Rewire `Sync-ExternalAntigravityContent`**
+
+Apply the identical replacement to its inner `foreach` header. Its `try`
+block starts after this, so place the resolution and `continue` **before**
+the `try`:
+
+```powershell
+        foreach ($declared in (Get-DeclaredPlugins -Marketplace $mp)) {
+            $pluginName = $declared.Name
+            $resolved = Resolve-PluginDir -RepoRoot $RepoRoot -VendorCacheDir $VendorCacheDir -Marketplace $mp -DeclaredPlugin $declared
+            if ($resolved.Failure -ne "") { $failures += $resolved.Failure; continue }
+            $pluginDir = $resolved.Dir
+            $stagedPluginDir = Join-Path $StagedDir "antigravity\$pluginName"
+
+            try {
+```
+
+- [ ] **Step 6: Run both suites and watch them pass**
+
+Run: `pwsh -NoProfile -File bootstrap/sync-external-codex.test.ps1 && pwsh -NoProfile -File bootstrap/sync-external-antigravity.test.ps1`
+Expected: both PASS.
+
+- [ ] **Step 7: Port both rewirings to `sync.sh`**
+
+Add `resolve_plugin_dir` after `save_resolved_commit`, mirroring
+`Resolve-PluginDir` exactly, then replace the inner loop header in both
+`sync_external_codex_content` and `sync_external_antigravity_content`.
+Before:
+
+```bash
+    while IFS= read -r plugin_line; do
+      plugin="$(echo "$plugin_line" | jq -r '.')"
+      [ -n "$plugin" ] || continue
+      plugin_dir="$vendor_cache_dir/$name/$plugin"
+```
+
+After:
+
+```bash
+    while IFS= read -r plugin_line; do
+      plugin="$(echo "$plugin_line" | jq -r '.name')"
+      [ -n "$plugin" ] || continue
+      resolved_json="$(resolve_plugin_dir "$repo_root" "$vendor_cache_dir" "$mp_json" "$plugin_line")"
+      resolve_failure="$(echo "$resolved_json" | jq -r '.failure')"
+      if [ -n "$resolve_failure" ]; then
+        echo "$resolve_failure" >&2
+        failed=1
+        continue
+      fi
+      plugin_dir="$(echo "$resolved_json" | jq -r '.dir')"
+```
+
+Both loops feed from `get_declared_plugins "$mp_json"` instead of
+`jq -c '.plugins[]?'`, so `$plugin_line` is now an object with `.name`.
+
+- [ ] **Step 8: Verify everything and commit**
+
+Run the full suite:
+
+```bash
+for t in bootstrap/*.test.ps1; do [ "$t" = "bootstrap/sync.claude-code.test.ps1" ] || pwsh -NoProfile -File "$t" || echo "FAILED: $t"; done
+for t in bootstrap/*.test.sh bootstrap/tests/fixtures/*.test.sh; do bash "$t" || echo "FAILED: $t"; done
+```
+
+Expected: every PowerShell suite PASSes. Bash suites that create symlinks
+fail on a Windows dev machine without Developer Mode — that is the
+pre-existing environment limitation recorded in the ledger, not a regression.
+Confirm each bash failure names a symlink operation before accepting it.
+
+```bash
+git add bootstrap/
+git commit -m "Route both sync loops through manifest-based plugin resolution"
+```
+
+---
+
+### Task 17: Live re-verification against the real 39-plugin roster
+
+**Files:**
+- Create: `bootstrap/verify-external.ps1`
+- Modify: `AGENTS.md`
+
+**Interfaces:**
+- Consumes: the whole synced system.
+- Produces: `bootstrap/verify-external.ps1`, runnable standalone, exit 0 when
+  live state matches the declaration.
+
+Design acceptance criterion 9 states that a green test suite does not satisfy
+this task. Tasks 12–16 are proven against fixtures; this proves the real
+roster on a real machine. This script is also the seed of the milestone's
+Spec 5.
+
+- [ ] **Step 1: Write the verifier**
+
+Create `bootstrap/verify-external.ps1`:
+
+```powershell
+param(
+    [string]$RepoRoot = (Split-Path $PSScriptRoot -Parent),
+    [string]$CodexSkillsDir = (Join-Path $env:USERPROFILE ".agents\skills"),
+    [string]$AntigravityPluginsDir = (Join-Path $env:USERPROFILE ".gemini\config\plugins"),
+    [string]$CodexConfigPath = (Join-Path $env:USERPROFILE ".codex\config.toml")
+)
+
+$ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "sync.ps1") -Import
+
+$vendorCacheDir = Join-Path $RepoRoot ".vendor-cache"
+$problems = @()
+$expectedSkills = 0
+$expectedMcp = 0
+
+foreach ($mp in (Get-ExternalMarketplaces -RepoRoot $RepoRoot)) {
+    foreach ($declared in (Get-DeclaredPlugins -Marketplace $mp)) {
+        $r = Resolve-PluginDir -RepoRoot $RepoRoot -VendorCacheDir $vendorCacheDir -Marketplace $mp -DeclaredPlugin $declared
+        if ($r.Failure -ne "") { $problems += $r.Failure; continue }
+
+        $skillsRoot = Join-Path $r.Dir "skills"
+        if (Test-Path $skillsRoot) {
+            foreach ($s in (Get-ChildItem $skillsRoot -Directory)) {
+                $expectedSkills++
+                if (-not (Test-Path (Join-Path $CodexSkillsDir $s.Name))) {
+                    $problems += "Codex: skill '$($s.Name)' (from '$($declared.Name)') is not linked"
+                }
+            }
+        }
+        if (Test-Path (Join-Path $r.Dir ".mcp.json")) { $expectedMcp++ }
+
+        if (-not (Test-Path (Join-Path $AntigravityPluginsDir $declared.Name))) {
+            $problems += "Antigravity: plugin '$($declared.Name)' is not linked"
+        }
+    }
+}
+
+$actualMcp = 0
+if (Test-Path $CodexConfigPath) {
+    $actualMcp = @(Select-String -Path $CodexConfigPath -Pattern '^\[mcp_servers\.' -AllMatches).Count
+}
+
+Write-Output "Expected skills: $expectedSkills   Expected plugins shipping MCP: $expectedMcp"
+Write-Output "Codex [mcp_servers.*] entries present: $actualMcp"
+
+if ($problems.Count -gt 0) {
+    Write-Output ""
+    Write-Output "VERIFY FAILED ($($problems.Count) problems):"
+    $problems | ForEach-Object { Write-Output "  - $_" }
+    exit 1
+}
+if ($expectedSkills -eq 0) {
+    Write-Output "VERIFY FAILED: resolved zero skills across the whole roster — resolution is not working."
+    exit 1
+}
+Write-Output "VERIFY OK"
+```
+
+The `$expectedSkills -eq 0` guard exists because the original bug produced
+exactly that state while reporting success.
+
+- [ ] **Step 2: Run the real sync, then verify**
+
+```bash
+pwsh -NoProfile -File bootstrap/sync.ps1
+pwsh -NoProfile -File bootstrap/verify-external.ps1
+```
+
+Expected: sync exits 0; verify prints a non-zero expected-skill count and
+`VERIFY OK`.
+
+If verify fails, fix the cause — do not adjust the verifier to match broken
+state.
+
+- [ ] **Step 3: Confirm idempotency against the real roster (criterion 4)**
+
+```bash
+cp ~/.codex/config.toml /tmp/codex-before.toml
+pwsh -NoProfile -File bootstrap/sync.ps1
+diff /tmp/codex-before.toml ~/.codex/config.toml && echo "IDEMPOTENT"
+pwsh -NoProfile -File bootstrap/verify-external.ps1
+```
+
+Expected: `IDEMPOTENT` (no diff) and `VERIFY OK`. A second sync must not
+re-pin anything — every previously unpinned plugin now carries a
+`resolvedCommit`, so no "Pinned ..." line should appear on this run.
+
+- [ ] **Step 4: Confirm criterion 2 content, not just presence**
+
+```bash
+grep -c '^\[mcp_servers\.' ~/.codex/config.toml
+ls ~/.agents/skills | wc -l
+```
+
+Expected: the `[mcp_servers.*]` count is at least the pre-existing 2 plus
+one per plugin shipping MCP, and the skills count exceeds the 3 that v1
+contributed. Compare both against the numbers `verify-external.ps1` printed.
+
+- [ ] **Step 5: Confirm criterion 8 live — a declared-but-unresolvable plugin is reported**
+
+Temporarily add `"this-plugin-does-not-exist"` to the first marketplace's
+`plugins` array in `bootstrap/external-marketplaces.json`, then:
+
+```bash
+pwsh -NoProfile -File bootstrap/sync.ps1; echo "exit=$?"
+```
+
+Expected: a failure line naming `this-plugin-does-not-exist`, and `exit=1`.
+Then revert the edit with `git checkout bootstrap/external-marketplaces.json`
+and re-run sync to confirm it returns to exit 0.
+
+Note: `git checkout` also discards any `resolvedCommit` values written during
+this session. Re-run sync once afterwards so they are re-recorded, then
+commit the file with them present.
+
+- [ ] **Step 6: Record the outcome in `AGENTS.md`**
+
+Add to `AGENTS.md`, under a new `## Verifying a sync` heading:
+
+```markdown
+## Verifying a sync
+
+`bootstrap/sync.ps1` links content; `bootstrap/verify-external.ps1` proves
+it landed. Run both after any change to the declared roster:
+
+    pwsh bootstrap/sync.ps1
+    pwsh bootstrap/verify-external.ps1
+
+Verify exits non-zero and names every plugin whose skills or links are
+missing. It also fails if the whole roster resolves to zero skills, which is
+what a silent resolution bug looks like.
+
+Plugins whose marketplace declares no commit are pinned on first sync: the
+resolved SHA is written back into `bootstrap/external-marketplaces.json` as
+`resolvedCommit`. Commit that change — it is the lockfile.
+```
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add bootstrap/verify-external.ps1 AGENTS.md bootstrap/external-marketplaces.json
+git commit -m "Add live external-content verifier and record first-use pins"
+```
