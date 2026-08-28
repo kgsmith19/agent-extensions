@@ -310,6 +310,26 @@ function Sync-PluginAgentsAntigravity {
 
 $script:CodexHookEvents = @("PreToolUse", "PostToolUse", "Stop", "UserPromptSubmit", "SessionStart")
 $script:AntigravityHookEvents = @("PreToolUse", "PostToolUse", "Stop")
+$script:HookEnvWrapper = Join-Path $PSScriptRoot "hook_env_wrapper.py"
+
+# Neither Codex's nor Antigravity's hooks.json schema has an env field
+# (confirmed against their published docs) — only Claude Code sets
+# CLAUDE_PLUGIN_ROOT as an actual environment variable for the spawned hook
+# process, in addition to substituting it into the command string. A hook
+# script that reads $env:CLAUDE_PLUGIN_ROOT / os.environ['CLAUDE_PLUGIN_ROOT']
+# itself (e.g. to import sibling modules, as hookify's hooks/*.py do for
+# their core/ package) silently no-ops on both targets without this. Only
+# rewrites the one confirmed-real shape (`python3 "<script>"`, nothing else
+# appended) produced by substituting ${CLAUDE_PLUGIN_ROOT} into a plugin's
+# own hooks.json — anything else is left untouched rather than guessed at.
+function ConvertTo-WrappedHookCommand {
+    param([string]$Command, [string]$PluginDir)
+    if ($Command -match '^python3?\s+"([^"]+)"$') {
+        $scriptPath = $Matches[1]
+        return "python3 `"$script:HookEnvWrapper`" `"$PluginDir`" `"$scriptPath`""
+    }
+    return $Command
+}
 
 function Convert-HookEntriesForTarget {
     param($HooksObj, [string[]]$Events, [string]$PluginDir)
@@ -327,7 +347,8 @@ function Convert-HookEntriesForTarget {
                 if ($h.PSObject.Properties['timeout']) { $nh['timeout'] = $h.timeout }
                 $nh['type'] = if ($h.PSObject.Properties['type']) { $h.type } else { "command" }
                 $cmd = if ($h.PSObject.Properties['command']) { $h.command } else { "" }
-                $nh['command'] = $cmd.Replace('${CLAUDE_PLUGIN_ROOT}', $PluginDir)
+                $cmd = $cmd.Replace('${CLAUDE_PLUGIN_ROOT}', $PluginDir)
+                $nh['command'] = ConvertTo-WrappedHookCommand -Command $cmd -PluginDir $PluginDir
                 $newHooks += [PSCustomObject]$nh
             }
             $newEntry['hooks'] = $newHooks
@@ -844,6 +865,18 @@ function ConvertTo-AntigravityMcpConfig {
         $unknown = @($propNames | Where-Object { $allowed -notcontains $_ })
         if ($unknown.Count -gt 0) {
             throw "MCP server '$serverName' has unrecognized field(s): $($unknown -join ', ')."
+        }
+
+        # Antigravity's schema requires "serverUrl" for HTTP servers — "url"
+        # and "httpUrl" are explicitly documented as unsupported legacy
+        # field names (antigravity.google/docs/cli/mcp), confirmed directly
+        # against the real CLI: `agy plugin validate` rejected a translated
+        # "url" field with "must have either command or serverUrl".
+        # Renamed only for entries that actually have "url" — stdio entries
+        # (which use "command") pass through unchanged.
+        if ($hasUrl) {
+            $server | Add-Member -MemberType NoteProperty -Name 'serverUrl' -Value $server.url
+            $server.PSObject.Properties.Remove('url')
         }
     }
 

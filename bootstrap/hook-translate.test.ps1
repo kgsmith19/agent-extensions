@@ -36,8 +36,9 @@ foreach ($event in @("PreToolUse", "UserPromptSubmit", "SessionStart")) {
 if ($codexHooks.Contains("NotAnEvent")) {
     $failures += "Codex translation must drop events not in Codex's documented vocabulary"
 }
-if ($codexHooks["PreToolUse"][0].hooks[0].command -ne 'python3 "/plugins/demo/hooks/pre.py"') {
-    $failures += "Codex translation must rewrite `${CLAUDE_PLUGIN_ROOT} to the resolved absolute plugin dir, got: $($codexHooks['PreToolUse'][0].hooks[0].command)"
+$expectedCodexCmd = "python3 `"$script:HookEnvWrapper`" `"/plugins/demo`" `"/plugins/demo/hooks/pre.py`""
+if ($codexHooks["PreToolUse"][0].hooks[0].command -ne $expectedCodexCmd) {
+    $failures += "Codex translation must rewrite `${CLAUDE_PLUGIN_ROOT} to the resolved absolute plugin dir and wrap python3 commands for CLAUDE_PLUGIN_ROOT env propagation, got: $($codexHooks['PreToolUse'][0].hooks[0].command)"
 }
 $sessionStartHook = $codexHooks["SessionStart"][0].hooks[0]
 if ($sessionStartHook.PSObject.Properties['shell'] -or $sessionStartHook.PSObject.Properties['async']) {
@@ -55,6 +56,10 @@ if (-not $antigravityObj.'demo-plugin'.PSObject.Properties['PreToolUse']) {
 }
 if ($antigravityObj.'demo-plugin'.PSObject.Properties['UserPromptSubmit'] -or $antigravityObj.'demo-plugin'.PSObject.Properties['SessionStart']) {
     $failures += "Antigravity translation must not invent UserPromptSubmit/SessionStart support it doesn't document"
+}
+$expectedAntigravityCmd = "python3 `"$script:HookEnvWrapper`" `"/plugins/demo`" `"/plugins/demo/hooks/pre.py`""
+if ($antigravityObj.'demo-plugin'.PreToolUse[0].hooks[0].command -ne $expectedAntigravityCmd) {
+    $failures += "Antigravity translation must also wrap python3 hook commands for CLAUDE_PLUGIN_ROOT env propagation, got: $($antigravityObj.'demo-plugin'.PreToolUse[0].hooks[0].command)"
 }
 
 # --- A hooks.json with only non-overlapping Antigravity events produces no output ---
@@ -81,6 +86,54 @@ if (@($mergedObj.hooks.PreToolUse).Count -ne 2) {
 }
 if ($mergedObj.hooks.Stop[0].hooks[0].command -ne "c") {
     $failures += "Expected Merge-CodexHooksJson to include plugin-b's Stop hook"
+}
+
+# --- hook_env_wrapper.py: proves the actual failure mode and the fix, not just the string rewrite ---
+$python3 = Get-Command python3 -ErrorAction SilentlyContinue
+if ($python3) {
+    $wraptest = Join-Path $scratch "wraptest"
+    New-Item -ItemType Directory -Path (Join-Path $wraptest "core") -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $wraptest "hooks") -Force | Out-Null
+    New-Item -ItemType File -Path (Join-Path $wraptest "core\__init__.py") -Force | Out-Null
+    'def greet():' + "`n" + '    return "hello from core"' | Set-Content -Path (Join-Path $wraptest "core\helper.py")
+    @'
+import os
+import sys
+PLUGIN_ROOT = os.environ.get('CLAUDE_PLUGIN_ROOT')
+if PLUGIN_ROOT and PLUGIN_ROOT not in sys.path:
+    sys.path.insert(0, PLUGIN_ROOT)
+try:
+    from core.helper import greet
+except ImportError as e:
+    print(f"IMPORT FAILED: {e}")
+    sys.exit(0)
+print(greet())
+'@ | Set-Content -Path (Join-Path $wraptest "hooks\myhook.py")
+
+    # Without the fix (raw invocation, no CLAUDE_PLUGIN_ROOT in env): reproduces
+    # the exact silent-no-op failure mode this wrapper exists to fix.
+    Remove-Item Env:\CLAUDE_PLUGIN_ROOT -ErrorAction SilentlyContinue
+    $rawOutput = & python3 (Join-Path $wraptest "hooks\myhook.py") 2>&1 | Out-String
+    if ($rawOutput -notmatch '^IMPORT FAILED') {
+        $failures += "Expected the unwrapped hook script to fail importing its sibling module without CLAUDE_PLUGIN_ROOT set (reproducing the bug) -- got: $rawOutput"
+    }
+
+    # Through the wrapper, with the plugin dir passed explicitly: the import
+    # succeeds because CLAUDE_PLUGIN_ROOT is now actually in the environment.
+    Remove-Item Env:\CLAUDE_PLUGIN_ROOT -ErrorAction SilentlyContinue
+    $wrappedOutput = (& python3 $script:HookEnvWrapper $wraptest (Join-Path $wraptest "hooks\myhook.py") 2>&1 | Out-String).Trim()
+    if ($wrappedOutput -ne "hello from core") {
+        $failures += "Expected hook_env_wrapper.py to make CLAUDE_PLUGIN_ROOT available so the sibling-module import succeeds -- got: $wrappedOutput"
+    }
+} else {
+    Write-Output "python3 not found -- skipping hook_env_wrapper.py end-to-end test"
+}
+
+# --- A non-python command is left untouched, not guessed at ---
+'{ "hooks": { "PreToolUse": [{ "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/pre.js\"" }] }] } }' | Set-Content -Path (Join-Path $scratch "nonpython-hooks.json")
+$nonPythonCodexHooks = ConvertTo-CodexHooksJson -HooksJsonPath (Join-Path $scratch "nonpython-hooks.json") -PluginDir "/plugins/demo"
+if ($nonPythonCodexHooks["PreToolUse"][0].hooks[0].command -ne 'node "/plugins/demo/hooks/pre.js"') {
+    $failures += "A non-python3 hook command must be left unwrapped (only the confirmed python3 `"<script>`" shape is rewritten), got: $($nonPythonCodexHooks['PreToolUse'][0].hooks[0].command)"
 }
 
 Remove-Item -Recurse -Force $scratch
