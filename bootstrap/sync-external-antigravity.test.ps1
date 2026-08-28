@@ -11,6 +11,7 @@ $declareRoot = Join-Path $scratch "declare-root"
 $vendorCache = Join-Path $scratch "vendor-cache"
 $stagedDir = Join-Path $scratch "staged"
 $antigravityPluginsDir = Join-Path $scratch "gemini-plugins"
+$antigravityAgentsDir = Join-Path $scratch "gemini-agents"
 New-Item -ItemType Directory -Path (Join-Path $declareRoot "bootstrap") -Force | Out-Null
 New-Item -ItemType Directory -Path $antigravityPluginsDir -Force | Out-Null
 
@@ -27,7 +28,7 @@ Set-Content -Path (Join-Path $declareRoot "bootstrap\external-marketplaces.json"
 Sync-VendorCache -RepoRoot $declareRoot -VendorCacheDir $vendorCache | Out-Null
 
 $failures = @()
-$reported = Sync-ExternalAntigravityContent -RepoRoot $declareRoot -VendorCacheDir $vendorCache -StagedDir $stagedDir -AntigravityPluginsDir $antigravityPluginsDir
+$reported = Sync-ExternalAntigravityContent -RepoRoot $declareRoot -VendorCacheDir $vendorCache -StagedDir $stagedDir -AntigravityPluginsDir $antigravityPluginsDir -AntigravityAgentsDir $antigravityAgentsDir
 
 if ($reported.Count -eq 0) {
     $failures += "Expected a reported failure for delta-malformed, got none"
@@ -58,6 +59,15 @@ if (-not (Test-Path (Join-Path $zetaLink "skills\remote-greet\SKILL.md"))) {
 $etaLink = Join-Path $antigravityPluginsDir "eta-repo-subpath"
 if (-not (Test-Path (Join-Path $etaLink "skills\eta-greet\SKILL.md"))) {
     $failures += "eta-repo-subpath's 'eta-greet' skill was not staged from its repo subdirectory"
+}
+
+# plugin.json marker (required by Antigravity's real loader to recognize a
+# directory as a plugin at all — see https://antigravity.google/docs/ide/plugins/)
+$alphaPluginJson = Join-Path $antigravityPluginsDir "alpha-skills\plugin.json"
+if (-not (Test-Path $alphaPluginJson)) {
+    $failures += "alpha-skills: no plugin.json was staged — Antigravity's loader would not recognize this directory as a plugin"
+} elseif ((Get-Content $alphaPluginJson -Raw | ConvertFrom-Json).name -ne "alpha-skills") {
+    $failures += "alpha-skills' plugin.json has the wrong 'name'"
 }
 
 $omegaReported = @($reported) | Where-Object { $_ -match "omega-absent" }

@@ -45,7 +45,7 @@ $cloneFailures = Sync-VendorCache -RepoRoot $declareRoot -VendorCacheDir $vendor
 if ($cloneFailures.Count -gt 0) {
     $failures += "Sync-VendorCache reported failures on a valid fixture: $($cloneFailures -join '; ')"
 }
-$clonedFile = Join-Path $vendorCache "fixture-mp\alpha-skills\skills\greet\SKILL.md"
+$clonedFile = Join-Path $vendorCache "fixture-mp\plugins\alpha-skills\skills\greet\SKILL.md"
 if (-not (Test-Path $clonedFile)) {
     $failures += "Vendor cache clone did not produce expected file: $clonedFile"
 }

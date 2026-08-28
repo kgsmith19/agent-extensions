@@ -1,0 +1,8 @@
+{
+  "skills": [
+    { "name": "canvas-design", "source": "plugins/anthropic-product-skills/skills/canvas-design" },
+    { "name": "web-artifacts-builder", "source": "plugins/anthropic-product-skills/skills/web-artifacts-builder" },
+    { "name": "skill-creator", "source": "plugins/general-skills/skills/skill-creator" }
+  ],
+  "connectors": []
+}

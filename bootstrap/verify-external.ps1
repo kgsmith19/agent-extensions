@@ -1,9 +1,9 @@
 #!/usr/bin/env pwsh
 param(
     [string]$RepoRoot = (Split-Path $PSScriptRoot -Parent),
-    [string]$CodexSkillsDir = (Join-Path $env:USERPROFILE ".agents\skills"),
-    [string]$AntigravityPluginsDir = (Join-Path $env:USERPROFILE ".gemini\config\plugins"),
-    [string]$CodexConfigPath = (Join-Path $env:USERPROFILE ".codex\config.toml")
+    [string]$CodexSkillsDir = (Join-Path $HOME ".agents\skills"),
+    [string]$AntigravityPluginsDir = (Join-Path $HOME ".gemini\config\plugins"),
+    [string]$CodexConfigPath = (Join-Path $HOME ".codex\config.toml")
 )
 
 $ErrorActionPreference = "Stop"

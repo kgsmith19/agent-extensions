@@ -14,6 +14,7 @@ DECLARE_ROOT="$SCRATCH/declare-root"
 VENDOR_CACHE="$SCRATCH/vendor-cache"
 STAGED_DIR="$SCRATCH/staged"
 ANTIGRAVITY_DIR="$SCRATCH/gemini-plugins"
+ANTIGRAVITY_AGENTS_DIR="$SCRATCH/gemini-agents"
 mkdir -p "$DECLARE_ROOT/bootstrap" "$ANTIGRAVITY_DIR"
 
 REPO_DIR="$SCRATCH/plugin-repo"
@@ -33,7 +34,7 @@ failures=()
 
 STDERR_CAPTURE="$SCRATCH/stderr-capture.txt"
 REPORTED_OK=1
-sync_external_antigravity_content "$DECLARE_ROOT" "$VENDOR_CACHE" "$STAGED_DIR" "$ANTIGRAVITY_DIR" 2>"$STDERR_CAPTURE" || REPORTED_OK=0
+sync_external_antigravity_content "$DECLARE_ROOT" "$VENDOR_CACHE" "$STAGED_DIR" "$ANTIGRAVITY_DIR" "$ANTIGRAVITY_AGENTS_DIR" 2>"$STDERR_CAPTURE" || REPORTED_OK=0
 if [ "$REPORTED_OK" = "1" ]; then
   failures+=("Expected sync_external_antigravity_content to return non-zero for delta-malformed/epsilon-invalid-json, it returned 0")
 fi
@@ -60,6 +61,16 @@ if [ ! -f "$ANTIGRAVITY_DIR/zeta-repo-pinned/skills/remote-greet/SKILL.md" ]; th
 fi
 if [ ! -f "$ANTIGRAVITY_DIR/eta-repo-subpath/skills/eta-greet/SKILL.md" ]; then
   failures+=("eta-repo-subpath's 'eta-greet' skill was not staged from its repo subdirectory")
+fi
+
+# --- plugin.json marker (required by Antigravity's real loader to
+# recognize a directory as a plugin at all — see
+# https://antigravity.google/docs/ide/plugins/) ---
+ALPHA_PLUGIN_JSON="$ANTIGRAVITY_DIR/alpha-skills/plugin.json"
+if [ ! -f "$ALPHA_PLUGIN_JSON" ]; then
+  failures+=("alpha-skills: no plugin.json was staged — Antigravity's loader would not recognize this directory as a plugin")
+elif [ "$(jq -r '.name' "$ALPHA_PLUGIN_JSON")" != "alpha-skills" ]; then
+  failures+=("alpha-skills' plugin.json has the wrong 'name'")
 fi
 if ! grep -q "omega-absent" "$STDERR_CAPTURE"; then
   failures+=("omega-absent is declared but not in the manifest; it must be reported as a failure")

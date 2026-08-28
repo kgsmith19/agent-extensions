@@ -46,7 +46,7 @@ fi
 if ! sync_vendor_cache "$DECLARE_ROOT" "$VENDOR_CACHE"; then
   failures+=("sync_vendor_cache reported failure on a valid fixture")
 fi
-CLONED_FILE="$VENDOR_CACHE/fixture-mp/alpha-skills/skills/greet/SKILL.md"
+CLONED_FILE="$VENDOR_CACHE/fixture-mp/plugins/alpha-skills/skills/greet/SKILL.md"
 if [ ! -f "$CLONED_FILE" ]; then
   failures+=("Vendor cache clone did not produce expected file: $CLONED_FILE")
 fi

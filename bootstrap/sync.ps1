@@ -2,11 +2,17 @@
 [CmdletBinding()]
 param(
     [string]$RepoRoot = (Split-Path -Parent $PSScriptRoot),
-    [string]$CodexSkillsDir = (Join-Path $env:USERPROFILE ".agents\skills"),
-    [string]$AntigravityPluginsDir = (Join-Path $env:USERPROFILE ".gemini\config\plugins"),
+    [string]$CodexSkillsDir = (Join-Path $HOME ".agents\skills"),
+    [string]$CodexAgentsDir = (Join-Path $HOME ".codex\agents"),
+    [string]$AntigravityPluginsDir = (Join-Path $HOME ".gemini\config\plugins"),
+    [string]$AntigravityAgentsDir = (Join-Path $HOME ".gemini\config\agents"),
     [switch]$SkipClaudeCode,
-    [switch]$Import  # when set, only defines functions (used by sync.test.ps1)
+    [switch]$Import,  # when set, only defines functions (used by sync.test.ps1)
+    [switch]$ConfirmAccountApplied
 )
+
+$CodexSkillsDirOverridden = $PSBoundParameters.ContainsKey('CodexSkillsDir')
+$AntigravityPluginsDirOverridden = $PSBoundParameters.ContainsKey('AntigravityPluginsDir')
 
 $ErrorActionPreference = "Stop"
 
@@ -30,10 +36,16 @@ function New-OrRepairJunction {
         Remove-Item $LinkPath -Force
     }
 
+    # Junctions are an NTFS-only concept and don't exist on Linux/macOS.
+    # Windows uses a junction specifically because it needs neither Admin
+    # nor Developer Mode, unlike a Windows symlink. Non-Windows has no such
+    # restriction, so a real symlink there is the direct equivalent of what
+    # sync.sh already creates with `ln -s`.
+    $linkType = if ($IsWindows) { "Junction" } else { "SymbolicLink" }
     try {
-        New-Item -ItemType Junction -Path $LinkPath -Target $TargetPath -Force | Out-Null
+        New-Item -ItemType $linkType -Path $LinkPath -Target $TargetPath -Force | Out-Null
     } catch {
-        throw "Failed to create junction '$LinkPath' -> '$TargetPath': $($_.Exception.Message)"
+        throw "Failed to create $linkType '$LinkPath' -> '$TargetPath': $($_.Exception.Message)"
     }
 }
 
@@ -131,6 +143,293 @@ function Get-PluginSource {
     }
     return New-PluginSourceResult -Kind "repo" -Path "" `
         -Url (& $field 'url') -Sha (& $field 'sha') -Ref (& $field 'ref') -SubPath (& $field 'path') -ErrorText ""
+}
+
+# --- Agent translation (Claude markdown -> Codex TOML / Antigravity MD) ---
+#
+# Real plugin data includes YAML frontmatter this codebase has no library
+# to parse safely: multi-line block scalars (`description: |`), quoted
+# values with embedded punctuation, files with no `name:` at all. Rather
+# than hand-roll a YAML parser and risk silently mangling those (the exact
+# failure mode Spec 1's amendment had to fix elsewhere), this only
+# translates single-line scalar values it can extract with confidence and
+# reports anything else as a declared per-agent failure — never a guess.
+#
+# Deliberately NOT translated: `tools` and `model`. Claude's tool names
+# (Read, Grep, Bash, ...) and model aliases (sonnet, opus) have no
+# principled mapping to Codex's or Antigravity's own tool/model
+# vocabularies — carrying them over as literal strings would silently
+# produce wrong (not just incomplete) configuration. Translated agents
+# get the target provider's default tools and default model instead.
+
+function Get-YamlScalar {
+    param([string]$Raw)
+    $Raw = $Raw.Trim()
+    if ($Raw -eq "" -or $Raw -eq "|" -or $Raw -eq "|-" -or $Raw -eq "|+" -or $Raw -eq ">" -or $Raw -eq ">-" -or $Raw -eq ">+") {
+        return "__COMPLEX__"
+    }
+    if ($Raw.Length -ge 2 -and $Raw.StartsWith("'") -and $Raw.EndsWith("'")) {
+        return $Raw.Substring(1, $Raw.Length - 2) -replace "''", "'"
+    }
+    if ($Raw.Length -ge 2 -and $Raw.StartsWith('"') -and $Raw.EndsWith('"')) {
+        return $Raw.Substring(1, $Raw.Length - 2)
+    }
+    return $Raw
+}
+
+function Get-AgentFrontmatter {
+    param([string]$AgentMdPath)
+    $lines = Get-Content $AgentMdPath
+    if ($lines.Count -eq 0 -or $lines[0].Trim() -ne "---") {
+        return [PSCustomObject]@{ Name = ""; Description = ""; ErrorText = "no YAML frontmatter (file does not start with '---')" }
+    }
+    $endIdx = -1
+    for ($i = 1; $i -lt $lines.Count; $i++) {
+        if ($lines[$i].Trim() -eq "---") { $endIdx = $i; break }
+    }
+    $frontmatter = if ($endIdx -gt 1) { $lines[1..($endIdx - 1)] } else { @() }
+
+    $nameLine = $frontmatter | Where-Object { $_ -match '^name:' } | Select-Object -First 1
+    $descLine = $frontmatter | Where-Object { $_ -match '^description:' } | Select-Object -First 1
+
+    if (-not $nameLine) {
+        $name = [System.IO.Path]::GetFileNameWithoutExtension($AgentMdPath)
+    } else {
+        $name = Get-YamlScalar ($nameLine -replace '^name:', '')
+        if ($name -eq "__COMPLEX__") {
+            return [PSCustomObject]@{ Name = ""; Description = ""; ErrorText = "'name' is not a simple single-line value" }
+        }
+    }
+
+    if (-not $descLine) {
+        $description = ""
+    } else {
+        $description = Get-YamlScalar ($descLine -replace '^description:', '')
+        if ($description -eq "__COMPLEX__") {
+            return [PSCustomObject]@{ Name = ""; Description = ""; ErrorText = "'description' is a multi-line/block YAML value — not mechanically translatable" }
+        }
+    }
+
+    return [PSCustomObject]@{ Name = $name; Description = $description; ErrorText = "" }
+}
+
+function Get-AgentBody {
+    param([string]$AgentMdPath)
+    $lines = Get-Content $AgentMdPath
+    $seen = 0
+    $body = @()
+    foreach ($line in $lines) {
+        if ($line.Trim() -eq "---") { $seen++; continue }
+        if ($seen -ge 2) { $body += $line }
+    }
+    return ($body -join "`n")
+}
+
+function ConvertTo-CodexAgentToml {
+    param([string]$AgentMdPath, [string]$PluginName)
+    $parsed = Get-AgentFrontmatter -AgentMdPath $AgentMdPath
+    if ($parsed.ErrorText -ne "") {
+        Write-Host "Agent '$(Split-Path -Leaf $AgentMdPath)' (from '$PluginName'): $($parsed.ErrorText)"
+        return $null
+    }
+    $qualifiedName = "$PluginName-$($parsed.Name)"
+    $body = Get-AgentBody -AgentMdPath $AgentMdPath
+
+    if ($body.Contains("'''")) {
+        Write-Host "Agent '$qualifiedName': system prompt contains a literal ''' sequence, which TOML literal strings cannot safely embed"
+        return $null
+    }
+
+    $nameToml = $qualifiedName | ConvertTo-Json -Compress
+    $descToml = $parsed.Description | ConvertTo-Json -Compress
+    return "name = $nameToml`ndescription = $descToml`ndeveloper_instructions = '''`n$body`n'''`n"
+}
+
+function ConvertTo-AntigravityAgentMd {
+    param([string]$AgentMdPath, [string]$PluginName)
+    $parsed = Get-AgentFrontmatter -AgentMdPath $AgentMdPath
+    if ($parsed.ErrorText -ne "") {
+        Write-Host "Agent '$(Split-Path -Leaf $AgentMdPath)' (from '$PluginName'): $($parsed.ErrorText)"
+        return $null
+    }
+    $qualifiedName = "$PluginName-$($parsed.Name)"
+    $body = Get-AgentBody -AgentMdPath $AgentMdPath
+
+    $nameYaml = $qualifiedName | ConvertTo-Json -Compress
+    $descYaml = $parsed.Description | ConvertTo-Json -Compress
+    return "---`nname: $nameYaml`ndescription: $descYaml`n---`n`n$body`n"
+}
+
+function Sync-PluginAgentsCodex {
+    param([string]$PluginDir, [string]$PluginName, [string]$CodexAgentsDir)
+    $agentsRoot = Join-Path $PluginDir "agents"
+    if (-not (Test-Path $agentsRoot)) { return $true }
+
+    $ok = $true
+    foreach ($agentFile in (Get-ChildItem $agentsRoot -Filter "*.md" -File -ErrorAction SilentlyContinue)) {
+        $toml = ConvertTo-CodexAgentToml -AgentMdPath $agentFile.FullName -PluginName $PluginName
+        if ($null -eq $toml) { $ok = $false; continue }
+        if (-not (Test-Path $CodexAgentsDir)) { New-Item -ItemType Directory -Path $CodexAgentsDir -Force | Out-Null }
+        $base = [System.IO.Path]::GetFileNameWithoutExtension($agentFile.Name)
+        Set-Content -Path (Join-Path $CodexAgentsDir "$PluginName-$base.toml") -Value $toml -NoNewline
+    }
+    return $ok
+}
+
+function Sync-PluginAgentsAntigravity {
+    param([string]$PluginDir, [string]$PluginName, [string]$AntigravityAgentsDir)
+    $agentsRoot = Join-Path $PluginDir "agents"
+    if (-not (Test-Path $agentsRoot)) { return $true }
+
+    $ok = $true
+    foreach ($agentFile in (Get-ChildItem $agentsRoot -Filter "*.md" -File -ErrorAction SilentlyContinue)) {
+        $md = ConvertTo-AntigravityAgentMd -AgentMdPath $agentFile.FullName -PluginName $PluginName
+        if ($null -eq $md) { $ok = $false; continue }
+        if (-not (Test-Path $AntigravityAgentsDir)) { New-Item -ItemType Directory -Path $AntigravityAgentsDir -Force | Out-Null }
+        $base = [System.IO.Path]::GetFileNameWithoutExtension($agentFile.Name)
+        Set-Content -Path (Join-Path $AntigravityAgentsDir "$PluginName-$base.md") -Value $md -NoNewline
+    }
+    return $ok
+}
+
+# --- Hook translation (Claude hooks.json -> Codex / Antigravity) ---
+#
+# Ported only for events confirmed to exist in the target's own vocabulary
+# (developers.openai.com/codex/hooks; antigravity.google/docs/hooks/) —
+# every other declared event is left alone, not guessed at. Both targets'
+# hooks.json shapes were confirmed against official docs before writing
+# any of this, following the same discipline as the agent translators.
+#
+# ~/.codex/hooks.json is one file shared by every plugin, and JSON has no
+# comment syntax to mark a managed region the way config.toml's TOML
+# merge does — so this tool treats that whole file as fully managed and
+# regenerates it from the current roster every sync, same as it already
+# treats the Antigravity plugins folder. A hand-written Codex hooks.json
+# belongs in a different config layer (e.g. a project's own .codex/), not
+# merged into this one.
+
+$script:CodexHookEvents = @("PreToolUse", "PostToolUse", "Stop", "UserPromptSubmit", "SessionStart")
+$script:AntigravityHookEvents = @("PreToolUse", "PostToolUse", "Stop")
+
+function Convert-HookEntriesForTarget {
+    param($HooksObj, [string[]]$Events, [string]$PluginDir)
+    $result = [ordered]@{}
+    if ($null -eq $HooksObj) { return $result }
+    foreach ($prop in $HooksObj.PSObject.Properties) {
+        if ($prop.Name -notin $Events) { continue }
+        $entries = @()
+        foreach ($entry in @($prop.Value)) {
+            $newEntry = [ordered]@{}
+            if ($entry.PSObject.Properties['matcher']) { $newEntry['matcher'] = $entry.matcher }
+            $newHooks = @()
+            foreach ($h in @($entry.hooks)) {
+                $nh = [ordered]@{}
+                if ($h.PSObject.Properties['timeout']) { $nh['timeout'] = $h.timeout }
+                $nh['type'] = if ($h.PSObject.Properties['type']) { $h.type } else { "command" }
+                $cmd = if ($h.PSObject.Properties['command']) { $h.command } else { "" }
+                $nh['command'] = $cmd.Replace('${CLAUDE_PLUGIN_ROOT}', $PluginDir)
+                $newHooks += [PSCustomObject]$nh
+            }
+            $newEntry['hooks'] = $newHooks
+            $entries += [PSCustomObject]$newEntry
+        }
+        $result[$prop.Name] = $entries
+    }
+    return $result
+}
+
+function ConvertTo-CodexHooksJson {
+    param([string]$HooksJsonPath, [string]$PluginDir)
+    try {
+        $raw = Get-Content $HooksJsonPath -Raw | ConvertFrom-Json
+    } catch {
+        Write-Host "Failed to parse '$HooksJsonPath' as JSON"
+        return $null
+    }
+    $hooksObj = if ($raw.PSObject.Properties['hooks']) { $raw.hooks } else { $null }
+    return Convert-HookEntriesForTarget -HooksObj $hooksObj -Events $script:CodexHookEvents -PluginDir $PluginDir
+}
+
+function Merge-CodexHooksJson {
+    param([string]$HooksConfigPath, [hashtable]$HooksByPlugin)
+
+    $combined = [ordered]@{}
+    foreach ($plugin in $HooksByPlugin.Keys) {
+        $pluginHooks = $HooksByPlugin[$plugin]
+        foreach ($key in $pluginHooks.Keys) {
+            if (-not $combined.Contains($key)) { $combined[$key] = @() }
+            $combined[$key] = @($combined[$key]) + @($pluginHooks[$key])
+        }
+    }
+
+    $dir = Split-Path -Parent $HooksConfigPath
+    if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    (@{ hooks = $combined } | ConvertTo-Json -Depth 12) | Set-Content -Path $HooksConfigPath
+}
+
+function ConvertTo-AntigravityHooksJson {
+    param([string]$HooksJsonPath, [string]$PluginDir, [string]$PluginName)
+    try {
+        $raw = Get-Content $HooksJsonPath -Raw | ConvertFrom-Json
+    } catch {
+        Write-Host "Failed to parse '$HooksJsonPath' as JSON"
+        return $null
+    }
+    $hooksObj = if ($raw.PSObject.Properties['hooks']) { $raw.hooks } else { $null }
+    $events = Convert-HookEntriesForTarget -HooksObj $hooksObj -Events $script:AntigravityHookEvents -PluginDir $PluginDir
+    if ($events.Count -eq 0) { return "" }
+    $wrapper = [ordered]@{ $PluginName = $events }
+    return ($wrapper | ConvertTo-Json -Depth 12)
+}
+
+function Write-AntigravityHooksJson {
+    param([string]$PluginStagedDir, [string]$JsonContent)
+    if ([string]::IsNullOrWhiteSpace($JsonContent)) { return }
+    if (-not (Test-Path $PluginStagedDir)) { New-Item -ItemType Directory -Path $PluginStagedDir -Force | Out-Null }
+    Set-Content -Path (Join-Path $PluginStagedDir "hooks.json") -Value $JsonContent -NoNewline
+}
+
+# --- Commands gap report ---
+#
+# Hand re-authoring ~100 commands across 39 plugins as skills is an
+# explicit non-goal (re-forking on every upstream update, a content
+# project rather than mechanical translation) — this just names what
+# exists and isn't ported, per plugin, so the gap is visible rather than
+# silently absent.
+
+function New-CommandGapReport {
+    param([string]$RepoRoot, [string]$VendorCacheDir)
+    $reportPath = Join-Path $RepoRoot "bootstrap\command-gap-report.md"
+    $lines = @(
+        "# Command gap report", "",
+        "Generated by bootstrap/sync from the declared external roster.",
+        "Commands are Claude Code slash-command definitions. Hand re-authoring",
+        "them as skills for Codex/Antigravity is an explicit non-goal (see",
+        "``docs/superpowers/specs/2026-08-27-completion-milestone-design.md``,",
+        "Spec 4) — this names what exists and is not ported, per plugin,",
+        "rather than leaving the gap silent.", ""
+    )
+    $total = 0
+    $pluginsWithCommands = 0
+
+    foreach ($mp in (Get-ExternalMarketplaces -RepoRoot $RepoRoot)) {
+        foreach ($declared in (Get-DeclaredPlugins -Marketplace $mp)) {
+            $pluginName = $declared.Name
+            $resolved = Resolve-PluginDir -RepoRoot $RepoRoot -VendorCacheDir $VendorCacheDir -Marketplace $mp -DeclaredPlugin $declared
+            if ($resolved.Failure -ne "") { continue }
+            $commandsRoot = Join-Path $resolved.Dir "commands"
+            if (-not (Test-Path $commandsRoot)) { continue }
+            $names = @(Get-ChildItem $commandsRoot -Filter "*.md" -File -ErrorAction SilentlyContinue | ForEach-Object { $_.BaseName })
+            if ($names.Count -eq 0) { continue }
+            $total += $names.Count
+            $pluginsWithCommands++
+            $lines += "- **$pluginName** (from $($mp.name)): $($names -join ' ')"
+        }
+    }
+
+    $lines += ""
+    $lines += "$pluginsWithCommands plugin(s), $total command(s) total — none ported."
+    Set-Content -Path $reportPath -Value $lines
 }
 
 function Normalize-ExternalMcpServers {
@@ -615,6 +914,21 @@ function Write-AntigravityMcpConfig {
     Set-Content -Path $target -Value $JsonContent -NoNewline
 }
 
+function Write-AntigravityPluginJson {
+    # Per https://antigravity.google/docs/ide/plugins/ and
+    # .../cli/plugins/: a directory is only recognized as a plugin at all
+    # if it has a plugin.json marker at its root, with a `name` matching
+    # ^[a-zA-Z0-9-_]+$. This repo's own plugins already ship one (linked
+    # wholesale); externally-vendored plugins are staged from scratch and
+    # need one generated, or Antigravity's loader would not see them.
+    param([string]$PluginStagedDir, [string]$PluginName)
+    if (-not (Test-Path $PluginStagedDir)) {
+        New-Item -ItemType Directory -Path $PluginStagedDir -Force | Out-Null
+    }
+    $target = Join-Path $PluginStagedDir "plugin.json"
+    (@{ name = $PluginName } | ConvertTo-Json) | Set-Content -Path $target
+}
+
 function Sync-CodexSkills {
     param([string]$RepoRoot, [string]$CodexSkillsDir)
 
@@ -636,11 +950,12 @@ function Sync-CodexSkills {
 }
 
 function Sync-ExternalCodexContent {
-    param([string]$RepoRoot, [string]$VendorCacheDir, [string]$CodexSkillsDir, [string]$CodexConfigPath)
+    param([string]$RepoRoot, [string]$VendorCacheDir, [string]$CodexSkillsDir, [string]$CodexConfigPath, [string]$CodexAgentsDir, [string]$CodexHooksConfigPath)
 
     $marketplaces = Get-ExternalMarketplaces -RepoRoot $RepoRoot
     $failures = @()
     $tomlByPlugin = @{}
+    $hooksByPlugin = @{}
 
     foreach ($mp in $marketplaces) {
         foreach ($declared in (Get-DeclaredPlugins -Marketplace $mp)) {
@@ -674,6 +989,20 @@ function Sync-ExternalCodexContent {
                     $failures += "Plugin '$pluginName' (from '$($mp.name)'): MCP translation to Codex TOML failed — $($_.Exception.Message)"
                 }
             }
+
+            if (-not (Sync-PluginAgentsCodex -PluginDir $pluginDir -PluginName $pluginName -CodexAgentsDir $CodexAgentsDir)) {
+                $failures += "Plugin '$pluginName' (from '$($mp.name)'): one or more agents could not be translated (see messages above)"
+            }
+
+            $hooksPath = Join-Path $pluginDir "hooks\hooks.json"
+            if (Test-Path $hooksPath) {
+                $translated = ConvertTo-CodexHooksJson -HooksJsonPath $hooksPath -PluginDir $pluginDir
+                if ($null -eq $translated) {
+                    $failures += "Plugin '$pluginName' (from '$($mp.name)'): hook translation to Codex failed"
+                } elseif ($translated.Count -gt 0) {
+                    $hooksByPlugin[$pluginName] = $translated
+                }
+            }
         }
     }
 
@@ -682,6 +1011,14 @@ function Sync-ExternalCodexContent {
             Merge-CodexMcpConfig -ConfigPath $CodexConfigPath -TomlByPlugin $tomlByPlugin
         } catch {
             $failures += "Failed to merge translated MCP servers into '$CodexConfigPath' — $($_.Exception.Message)"
+        }
+    }
+
+    if ($hooksByPlugin.Count -gt 0) {
+        try {
+            Merge-CodexHooksJson -HooksConfigPath $CodexHooksConfigPath -HooksByPlugin $hooksByPlugin
+        } catch {
+            $failures += "Failed to merge translated hooks into '$CodexHooksConfigPath' — $($_.Exception.Message)"
         }
     }
 
@@ -705,7 +1042,7 @@ function Sync-AntigravityPlugins {
 }
 
 function Sync-ExternalAntigravityContent {
-    param([string]$RepoRoot, [string]$VendorCacheDir, [string]$StagedDir, [string]$AntigravityPluginsDir)
+    param([string]$RepoRoot, [string]$VendorCacheDir, [string]$StagedDir, [string]$AntigravityPluginsDir, [string]$AntigravityAgentsDir)
 
     $marketplaces = Get-ExternalMarketplaces -RepoRoot $RepoRoot
     $failures = @()
@@ -722,6 +1059,7 @@ function Sync-ExternalAntigravityContent {
                 if (-not (Test-Path $stagedPluginDir)) {
                     New-Item -ItemType Directory -Path $stagedPluginDir -Force | Out-Null
                 }
+                Write-AntigravityPluginJson -PluginStagedDir $stagedPluginDir -PluginName $pluginName
 
                 $skillsSource = Join-Path $pluginDir "skills"
                 if (Test-Path $skillsSource) {
@@ -739,8 +1077,26 @@ function Sync-ExternalAntigravityContent {
                     }
                 }
 
+                $hooksPath = Join-Path $pluginDir "hooks\hooks.json"
+                if (Test-Path $hooksPath) {
+                    $hooksJson = ConvertTo-AntigravityHooksJson -HooksJsonPath $hooksPath -PluginDir $pluginDir -PluginName $pluginName
+                    if ($null -eq $hooksJson) {
+                        $failures += "Plugin '$pluginName' (from '$($mp.name)'): hook translation to Antigravity failed"
+                    } elseif ($hooksJson -ne "") {
+                        Write-AntigravityHooksJson -PluginStagedDir $stagedPluginDir -JsonContent $hooksJson
+                    }
+                }
+
                 $finalLink = Join-Path $AntigravityPluginsDir $pluginName
                 New-OrRepairJunction -LinkPath $finalLink -TargetPath $stagedPluginDir
+
+                # Agents are not a plugin-level file per Antigravity's own docs
+                # (only skills/, mcp_config.json, hooks.json, rules/ are) —
+                # they live in a separate global directory, written there
+                # directly rather than staged alongside the plugin.
+                if (-not (Sync-PluginAgentsAntigravity -PluginDir $pluginDir -PluginName $pluginName -AntigravityAgentsDir $AntigravityAgentsDir)) {
+                    $failures += "Plugin '$pluginName' (from '$($mp.name)'): one or more agents could not be translated (see messages above)"
+                }
             } catch {
                 $failures += "Plugin '$pluginName' (from '$($mp.name)'): $($_.Exception.Message)"
             }
@@ -790,27 +1146,250 @@ function Sync-ClaudeCodeMarketplace {
     return $failures
 }
 
+# --- claude.ai account surface ---
+#
+# No upload API exists for account-level Skills, so this module can only
+# stage upload-ready bundles and print an ordered checklist against the
+# last confirmed state — never touch the account itself.
+
+function Get-AccountManifestJson {
+    param([string]$RepoRoot)
+    $path = Join-Path $RepoRoot "bootstrap\account-manifest.json"
+    if (-not (Test-Path $path)) { return [PSCustomObject]@{ skills = @(); connectors = @() } }
+    $json = Get-Content $path -Raw | ConvertFrom-Json
+    $skills = if ($json.PSObject.Properties['skills']) { @($json.skills) } else { @() }
+    $connectors = if ($json.PSObject.Properties['connectors']) { @($json.connectors) } else { @() }
+    return [PSCustomObject]@{ skills = $skills; connectors = $connectors }
+}
+
+function Get-AccountLastAppliedJson {
+    param([string]$RepoRoot)
+    $path = Join-Path $RepoRoot "bootstrap\account-manifest.last-applied.json"
+    if (-not (Test-Path $path)) { return [PSCustomObject]@{ skills = @(); connectors = @() } }
+    $json = Get-Content $path -Raw | ConvertFrom-Json
+    $skills = if ($json.PSObject.Properties['skills']) { @($json.skills) } else { @() }
+    $connectors = if ($json.PSObject.Properties['connectors']) { @($json.connectors) } else { @() }
+    return [PSCustomObject]@{ skills = $skills; connectors = $connectors }
+}
+
+function Copy-AccountSkillBundle {
+    param([string]$RepoRoot, [string]$StagedDir, [string]$SkillName, [string]$SourceRelPath)
+    $sourceDir = Join-Path $RepoRoot $SourceRelPath
+    if (-not (Test-Path $sourceDir)) {
+        Write-Host "Account skill '$SkillName': declared source '$SourceRelPath' does not exist"
+        return $false
+    }
+    $destDir = Join-Path $StagedDir $SkillName
+    if (Test-Path $destDir) { Remove-Item -Recurse -Force $destDir }
+    New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+    # A real copy, not a live link — this bundle is meant to be uploaded
+    # through the claude.ai UI, which does not resolve links.
+    Copy-Item -Path (Join-Path $sourceDir "*") -Destination $destDir -Recurse -Force
+    return $true
+}
+
+function Write-AccountChecklist {
+    param([string]$RepoRoot)
+    $current = Get-AccountManifestJson -RepoRoot $RepoRoot
+    $lastApplied = Get-AccountLastAppliedJson -RepoRoot $RepoRoot
+
+    $curSkillNames = @($current.skills | ForEach-Object { $_.name })
+    $lastSkillNames = @($lastApplied.skills | ForEach-Object { $_.name })
+    $curConnectorNames = @($current.connectors | ForEach-Object { $_.name })
+    $lastConnectorNames = @($lastApplied.connectors | ForEach-Object { $_.name })
+
+    $addSkills = @($curSkillNames | Where-Object { $_ -notin $lastSkillNames })
+    $removeSkills = @($lastSkillNames | Where-Object { $_ -notin $curSkillNames })
+    $addConnectors = @($curConnectorNames | Where-Object { $_ -notin $lastConnectorNames })
+    $removeConnectors = @($lastConnectorNames | Where-Object { $_ -notin $curConnectorNames })
+
+    $adds = @($addSkills | ForEach-Object { "skill: $_" }) + @($addConnectors | ForEach-Object { "connector: $_" })
+    $removes = @($removeSkills | ForEach-Object { "skill: $_" }) + @($removeConnectors | ForEach-Object { "connector: $_" })
+
+    if ($adds.Count -eq 0 -and $removes.Count -eq 0) {
+        Write-Host "claude.ai account: up to date with last-applied state."
+        return
+    }
+
+    Write-Host "claude.ai account checklist (manual — no upload API exists):"
+    if ($adds.Count -gt 0) {
+        Write-Host "  ADD:"
+        $adds | ForEach-Object { Write-Host "    - $_" }
+    }
+    if ($removes.Count -gt 0) {
+        Write-Host "  REMOVE:"
+        $removes | ForEach-Object { Write-Host "    - $_" }
+    }
+    Write-Host "  After applying by hand on claude.ai, run: bootstrap/sync.ps1 -ConfirmAccountApplied"
+}
+
+function Sync-AccountBundles {
+    param([string]$RepoRoot, [string]$StagedDir)
+    $manifest = Get-AccountManifestJson -RepoRoot $RepoRoot
+    if (-not (Test-Path $StagedDir)) { New-Item -ItemType Directory -Path $StagedDir -Force | Out-Null }
+
+    $failures = @()
+    foreach ($skill in $manifest.skills) {
+        if (-not (Copy-AccountSkillBundle -RepoRoot $RepoRoot -StagedDir $StagedDir -SkillName $skill.name -SourceRelPath $skill.source)) {
+            $failures += "Account skill '$($skill.name)': declared source '$($skill.source)' does not exist"
+        }
+    }
+
+    Write-AccountChecklist -RepoRoot $RepoRoot
+    return $failures
+}
+
+function Confirm-AccountApplied {
+    param([string]$RepoRoot)
+    $manifestPath = Join-Path $RepoRoot "bootstrap\account-manifest.json"
+    $lastAppliedPath = Join-Path $RepoRoot "bootstrap\account-manifest.last-applied.json"
+    if (-not (Test-Path $manifestPath)) {
+        throw "cannot confirm: '$manifestPath' does not exist"
+    }
+    Copy-Item -Path $manifestPath -Destination $lastAppliedPath -Force
+    Write-Output "Recorded current account-manifest.json as last-applied."
+}
+
+# --- Capability detection ---
+#
+# Each stage is gated on whether its target surface actually exists on this
+# machine. A capability test returns a hashtable {Available, Reason}.
+# Invoke-Stage reports a skip (with reason) rather than the stage failing
+# or silently doing nothing. This is the "stage" interface later specs
+# register new stages against: one capability test, one run scriptblock,
+# one Invoke-Stage call.
+
+function Test-CodexCapability {
+    param([bool]$Overridden)
+    if ($Overridden) { return @{ Available = $true } }
+    $codexHome = Join-Path $HOME ".codex"
+    if (Test-Path $codexHome) { return @{ Available = $true } }
+    return @{ Available = $false; Reason = "no '$codexHome' directory found and -CodexSkillsDir was not explicitly set" }
+}
+
+function Test-AntigravityCapability {
+    param([bool]$Overridden)
+    if ($Overridden) { return @{ Available = $true } }
+    $geminiHome = Join-Path $HOME ".gemini"
+    if (Test-Path $geminiHome) { return @{ Available = $true } }
+    return @{ Available = $false; Reason = "no '$geminiHome' directory found and -AntigravityPluginsDir was not explicitly set" }
+}
+
+function Test-VendorCacheCapability {
+    param([bool]$CodexAvailable, [bool]$AntigravityAvailable)
+    if ($CodexAvailable -or $AntigravityAvailable) { return @{ Available = $true } }
+    return @{ Available = $false; Reason = "neither Codex nor Antigravity capability detected" }
+}
+
+function Test-ClaudeCodeCapability {
+    param([bool]$SkipClaudeCode)
+    if ($SkipClaudeCode) { return @{ Available = $false; Reason = "-SkipClaudeCode is set" } }
+    if (Get-Command claude -ErrorAction SilentlyContinue) { return @{ Available = $true } }
+    return @{ Available = $false; Reason = "'claude' CLI not found on PATH" }
+}
+
+# --- Stage runner ---
+#
+# $RunFn must return an array of failure-message strings (empty on
+# success). Own-plugin stages (Sync-CodexSkills, Sync-AntigravityPlugins)
+# throw on error instead of returning failures — Invoke-Stage catches that
+# and converts it into a recorded failure so one bad stage no longer halts
+# every later stage, matching the partial-failure isolation the external
+# stages already had.
+
+$script:stageOk = @()
+$script:stageSkipped = @()
+$script:stageFailed = @()
+$script:allFailures = @()
+
+function Invoke-Stage {
+    param(
+        [string]$StageName,
+        [hashtable]$Capability,
+        [scriptblock]$RunFn
+    )
+    if (-not $Capability.Available) {
+        Write-Host "Skipping stage '$StageName': $($Capability.Reason)"
+        $script:stageSkipped += "$StageName`: $($Capability.Reason)"
+        return
+    }
+    $failures = @()
+    try {
+        $failures = @(& $RunFn)
+    } catch {
+        $failures = @($_.Exception.Message)
+    }
+    if ($failures.Count -gt 0) {
+        $script:allFailures += $failures
+        $script:stageFailed += $StageName
+    } else {
+        $script:stageOk += $StageName
+    }
+}
+
 if ($Import) { return }
+
+if ($ConfirmAccountApplied) {
+    Confirm-AccountApplied -RepoRoot $RepoRoot
+    exit 0
+}
 
 $vendorCacheDir = Join-Path $RepoRoot ".vendor-cache"
 $stagedDir = Join-Path $vendorCacheDir "_staged"
-$codexConfigPath = Join-Path $env:USERPROFILE ".codex\config.toml"
+$codexConfigPath = Join-Path $HOME ".codex\config.toml"
+$codexHooksConfigPath = Join-Path $HOME ".codex\hooks.json"
 
-Sync-CodexSkills -RepoRoot $RepoRoot -CodexSkillsDir $CodexSkillsDir | Out-Null
-Sync-AntigravityPlugins -RepoRoot $RepoRoot -AntigravityPluginsDir $AntigravityPluginsDir | Out-Null
+$codexCap = Test-CodexCapability -Overridden $CodexSkillsDirOverridden
+$antigravityCap = Test-AntigravityCapability -Overridden $AntigravityPluginsDirOverridden
+$vendorCacheCap = Test-VendorCacheCapability -CodexAvailable $codexCap.Available -AntigravityAvailable $antigravityCap.Available
+$claudeCodeCap = Test-ClaudeCodeCapability -SkipClaudeCode $SkipClaudeCode.IsPresent
 
-$allFailures = @()
-$allFailures += (Sync-VendorCache -RepoRoot $RepoRoot -VendorCacheDir $vendorCacheDir)
-$allFailures += (Sync-ExternalCodexContent -RepoRoot $RepoRoot -VendorCacheDir $vendorCacheDir -CodexSkillsDir $CodexSkillsDir -CodexConfigPath $codexConfigPath)
-$allFailures += (Sync-ExternalAntigravityContent -RepoRoot $RepoRoot -VendorCacheDir $vendorCacheDir -StagedDir $stagedDir -AntigravityPluginsDir $AntigravityPluginsDir)
-
-if (-not $SkipClaudeCode) {
-    $allFailures += (Sync-ClaudeCodeMarketplace -RepoRoot $RepoRoot)
+Invoke-Stage -StageName "codex-skills" -Capability $codexCap -RunFn {
+    Sync-CodexSkills -RepoRoot $RepoRoot -CodexSkillsDir $CodexSkillsDir | Out-Null
+    @()
+}
+Invoke-Stage -StageName "antigravity-plugins" -Capability $antigravityCap -RunFn {
+    Sync-AntigravityPlugins -RepoRoot $RepoRoot -AntigravityPluginsDir $AntigravityPluginsDir | Out-Null
+    @()
 }
 
-if ($allFailures.Count -gt 0) {
+Invoke-Stage -StageName "vendor-cache" -Capability $vendorCacheCap -RunFn {
+    Sync-VendorCache -RepoRoot $RepoRoot -VendorCacheDir $vendorCacheDir
+}
+Invoke-Stage -StageName "command-gap-report" -Capability $vendorCacheCap -RunFn {
+    New-CommandGapReport -RepoRoot $RepoRoot -VendorCacheDir $vendorCacheDir
+    @()
+}
+Invoke-Stage -StageName "external-codex-content" -Capability $codexCap -RunFn {
+    Sync-ExternalCodexContent -RepoRoot $RepoRoot -VendorCacheDir $vendorCacheDir -CodexSkillsDir $CodexSkillsDir -CodexConfigPath $codexConfigPath -CodexAgentsDir $CodexAgentsDir -CodexHooksConfigPath $codexHooksConfigPath
+}
+Invoke-Stage -StageName "external-antigravity-content" -Capability $antigravityCap -RunFn {
+    Sync-ExternalAntigravityContent -RepoRoot $RepoRoot -VendorCacheDir $vendorCacheDir -StagedDir $stagedDir -AntigravityPluginsDir $AntigravityPluginsDir -AntigravityAgentsDir $AntigravityAgentsDir
+}
+
+Invoke-Stage -StageName "claude-code-marketplace" -Capability $claudeCodeCap -RunFn {
+    Sync-ClaudeCodeMarketplace -RepoRoot $RepoRoot
+}
+Invoke-Stage -StageName "account-bundles" -Capability @{ Available = $true } -RunFn {
+    Sync-AccountBundles -RepoRoot $RepoRoot -StagedDir (Join-Path $vendorCacheDir "_staged\claude-ai")
+}
+
+Write-Output ""
+Write-Output "--- Sync summary ---"
+if ($script:stageOk.Count -gt 0) {
+    Write-Output "Ran: $($script:stageOk -join ', ')"
+}
+if ($script:stageSkipped.Count -gt 0) {
+    Write-Output "Skipped:"
+    $script:stageSkipped | ForEach-Object { Write-Output "  - $_" }
+}
+if ($script:stageFailed.Count -gt 0) {
+    Write-Output "Failed: $($script:stageFailed -join ', ')"
+}
+
+if ($script:allFailures.Count -gt 0) {
     Write-Output "Sync completed with failures:"
-    $allFailures | ForEach-Object { Write-Output "  - $_" }
+    $script:allFailures | ForEach-Object { Write-Output "  - $_" }
     exit 1
 }
 
