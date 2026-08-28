@@ -11,6 +11,8 @@ $declareRoot = Join-Path $scratch "declare-root"
 $vendorCache = Join-Path $scratch "vendor-cache"
 $codexSkillsDir = Join-Path $scratch "agents-skills"
 $codexConfigPath = Join-Path $scratch "codex-config.toml"
+$codexAgentsDir = Join-Path $scratch "codex-agents"
+$codexHooksConfigPath = Join-Path $scratch "codex-hooks.json"
 New-Item -ItemType Directory -Path (Join-Path $declareRoot "bootstrap") -Force | Out-Null
 New-Item -ItemType Directory -Path $codexSkillsDir -Force | Out-Null
 
@@ -28,7 +30,7 @@ Sync-VendorCache -RepoRoot $declareRoot -VendorCacheDir $vendorCache | Out-Null
 
 $failures = @()
 
-$reported = Sync-ExternalCodexContent -RepoRoot $declareRoot -VendorCacheDir $vendorCache -CodexSkillsDir $codexSkillsDir -CodexConfigPath $codexConfigPath
+$reported = Sync-ExternalCodexContent -RepoRoot $declareRoot -VendorCacheDir $vendorCache -CodexSkillsDir $codexSkillsDir -CodexConfigPath $codexConfigPath -CodexAgentsDir $codexAgentsDir -CodexHooksConfigPath $codexHooksConfigPath
 
 # --- Partial-failure isolation: delta-malformed fails, others still succeed ---
 if ($reported.Count -eq 0) {

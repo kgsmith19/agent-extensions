@@ -14,6 +14,8 @@ DECLARE_ROOT="$SCRATCH/declare-root"
 VENDOR_CACHE="$SCRATCH/vendor-cache"
 CODEX_SKILLS_DIR="$SCRATCH/agents-skills"
 CODEX_CONFIG_PATH="$SCRATCH/codex-config.toml"
+CODEX_AGENTS_DIR="$SCRATCH/codex-agents"
+CODEX_HOOKS_CONFIG_PATH="$SCRATCH/codex-hooks.json"
 mkdir -p "$DECLARE_ROOT/bootstrap" "$CODEX_SKILLS_DIR"
 
 REPO_DIR="$SCRATCH/plugin-repo"
@@ -33,7 +35,7 @@ failures=()
 
 STDERR_CAPTURE="$SCRATCH/stderr-capture.txt"
 REPORTED_OK=1
-sync_external_codex_content "$DECLARE_ROOT" "$VENDOR_CACHE" "$CODEX_SKILLS_DIR" "$CODEX_CONFIG_PATH" 2>"$STDERR_CAPTURE" || REPORTED_OK=0
+sync_external_codex_content "$DECLARE_ROOT" "$VENDOR_CACHE" "$CODEX_SKILLS_DIR" "$CODEX_CONFIG_PATH" "$CODEX_AGENTS_DIR" "$CODEX_HOOKS_CONFIG_PATH" 2>"$STDERR_CAPTURE" || REPORTED_OK=0
 
 if [ "$REPORTED_OK" = "1" ]; then
   failures+=("Expected sync_external_codex_content to return non-zero for delta-malformed/epsilon-invalid-json, it returned 0")

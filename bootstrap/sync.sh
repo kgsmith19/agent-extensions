@@ -4,8 +4,10 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CODEX_SKILLS_DIR_OVERRIDDEN="${CODEX_SKILLS_DIR:+1}"
 CODEX_SKILLS_DIR="${CODEX_SKILLS_DIR:-$HOME/.agents/skills}"
+CODEX_AGENTS_DIR="${CODEX_AGENTS_DIR:-$HOME/.codex/agents}"
 ANTIGRAVITY_PLUGINS_DIR_OVERRIDDEN="${ANTIGRAVITY_PLUGINS_DIR:+1}"
 ANTIGRAVITY_PLUGINS_DIR="${ANTIGRAVITY_PLUGINS_DIR:-$HOME/.gemini/config/plugins}"
+ANTIGRAVITY_AGENTS_DIR="${ANTIGRAVITY_AGENTS_DIR:-$HOME/.gemini/config/agents}"
 SKIP_CLAUDE_CODE="${SKIP_CLAUDE_CODE:-}"
 
 get_plugin_names() {
@@ -98,6 +100,328 @@ get_plugin_source() {
            error:("plugin \u0027" + $n + "\u0027 declares unsupported source kind")}
         end
       end' "$manifest"
+}
+
+# --- Agent translation (Claude markdown -> Codex TOML / Antigravity MD) ---
+#
+# Real plugin data includes YAML frontmatter this codebase has no library
+# to parse safely: multi-line block scalars (`description: |`), quoted
+# values with embedded punctuation, files with no `name:` at all. Rather
+# than hand-roll a YAML parser and risk silently mangling those (the exact
+# failure mode Spec 1's amendment had to fix elsewhere), this only
+# translates single-line scalar values it can extract with confidence and
+# reports anything else as a declared per-agent failure — never a guess.
+#
+# Deliberately NOT translated: `tools` and `model`. Claude's tool names
+# (Read, Grep, Bash, ...) and model aliases (sonnet, opus) have no
+# principled mapping to Codex's or Antigravity's own tool/model
+# vocabularies — carrying them over as literal strings would silently
+# produce wrong (not just incomplete) configuration. Translated agents
+# get the target provider's default tools and default model instead.
+
+extract_yaml_scalar() {
+  local raw
+  raw="$(printf '%s' "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  case "$raw" in
+    ''|'|'|'|-'|'|+'|'>'|'>-'|'>+')
+      echo "__COMPLEX__"
+      return 0
+      ;;
+  esac
+  if [[ "$raw" == \'*\' && "${#raw}" -ge 2 ]]; then
+    raw="${raw#\'}"; raw="${raw%\'}"; raw="${raw//\'\'/\'}"
+    printf '%s' "$raw"
+    return 0
+  fi
+  if [[ "$raw" == \"*\" && "${#raw}" -ge 2 ]]; then
+    raw="${raw#\"}"; raw="${raw%\"}"
+    printf '%s' "$raw"
+    return 0
+  fi
+  printf '%s' "$raw"
+}
+
+parse_agent_frontmatter() {
+  local agent_md_path="$1"
+  local frontmatter name_line desc_line name description
+
+  if [ "$(sed -n '1p' "$agent_md_path")" != "---" ]; then
+    jq -n --arg e "no YAML frontmatter (file does not start with '---')" '{name:"",description:"",error:$e}'
+    return 0
+  fi
+
+  frontmatter="$(awk 'NR==1{next} /^---[[:space:]]*$/{exit} {print}' "$agent_md_path")"
+  name_line="$(printf '%s\n' "$frontmatter" | grep -m1 '^name:')"
+  desc_line="$(printf '%s\n' "$frontmatter" | grep -m1 '^description:')"
+
+  if [ -z "$name_line" ]; then
+    name="$(basename "$agent_md_path" .md)"
+  else
+    name="$(extract_yaml_scalar "${name_line#name:}")"
+    if [ "$name" = "__COMPLEX__" ]; then
+      jq -n --arg e "'name' is not a simple single-line value" '{name:"",description:"",error:$e}'
+      return 0
+    fi
+  fi
+
+  if [ -z "$desc_line" ]; then
+    description=""
+  else
+    description="$(extract_yaml_scalar "${desc_line#description:}")"
+    if [ "$description" = "__COMPLEX__" ]; then
+      jq -n --arg e "'description' is a multi-line/block YAML value — not mechanically translatable" '{name:"",description:"",error:$e}'
+      return 0
+    fi
+  fi
+
+  jq -n --arg n "$name" --arg d "$description" '{name:$n,description:$d,error:""}'
+}
+
+get_agent_body() {
+  awk 'BEGIN{c=0} /^---[[:space:]]*$/{c++; next} c>=2{print}' "$1"
+}
+
+translate_agent_to_codex_toml() {
+  local agent_md_path="$1" plugin_name="$2"
+  local parsed error name description body qualified_name
+
+  parsed="$(parse_agent_frontmatter "$agent_md_path")"
+  error="$(echo "$parsed" | jq -r '.error')"
+  if [ -n "$error" ]; then
+    echo "Agent '$(basename "$agent_md_path")' (from '$plugin_name'): $error" >&2
+    return 1
+  fi
+  name="$(echo "$parsed" | jq -r '.name')"
+  description="$(echo "$parsed" | jq -r '.description')"
+  qualified_name="$plugin_name-$name"
+  body="$(get_agent_body "$agent_md_path")"
+
+  if [[ "$body" == *"'''"* ]]; then
+    echo "Agent '$qualified_name': system prompt contains a literal ''' sequence, which TOML literal strings cannot safely embed" >&2
+    return 1
+  fi
+
+  printf 'name = %s\n' "$(jq -rn --arg v "$qualified_name" '$v|tojson')"
+  printf 'description = %s\n' "$(jq -rn --arg v "$description" '$v|tojson')"
+  printf "developer_instructions = '''\n%s\n'''\n" "$body"
+}
+
+translate_agent_to_antigravity_md() {
+  local agent_md_path="$1" plugin_name="$2"
+  local parsed error name description body qualified_name
+
+  parsed="$(parse_agent_frontmatter "$agent_md_path")"
+  error="$(echo "$parsed" | jq -r '.error')"
+  if [ -n "$error" ]; then
+    echo "Agent '$(basename "$agent_md_path")' (from '$plugin_name'): $error" >&2
+    return 1
+  fi
+  name="$(echo "$parsed" | jq -r '.name')"
+  description="$(echo "$parsed" | jq -r '.description')"
+  qualified_name="$plugin_name-$name"
+  body="$(get_agent_body "$agent_md_path")"
+
+  printf -- '---\n'
+  printf 'name: %s\n' "$(jq -rn --arg v "$qualified_name" '$v|tojson')"
+  printf 'description: %s\n' "$(jq -rn --arg v "$description" '$v|tojson')"
+  printf -- '---\n\n%s\n' "$body"
+}
+
+sync_plugin_agents_codex() {
+  local plugin_dir="$1" plugin_name="$2" codex_agents_dir="$3"
+  local agents_root="$plugin_dir/agents"
+  [ -d "$agents_root" ] || return 0
+
+  local failed=0 agent_file base toml
+  for agent_file in "$agents_root"/*.md; do
+    [ -f "$agent_file" ] || continue
+    base="$(basename "$agent_file" .md)"
+    if toml="$(translate_agent_to_codex_toml "$agent_file" "$plugin_name")"; then
+      mkdir -p "$codex_agents_dir"
+      printf '%s' "$toml" > "$codex_agents_dir/$plugin_name-$base.toml"
+    else
+      failed=1
+    fi
+  done
+  return $failed
+}
+
+sync_plugin_agents_antigravity() {
+  local plugin_dir="$1" plugin_name="$2" antigravity_agents_dir="$3"
+  local agents_root="$plugin_dir/agents"
+  [ -d "$agents_root" ] || return 0
+
+  local failed=0 agent_file base md
+  for agent_file in "$agents_root"/*.md; do
+    [ -f "$agent_file" ] || continue
+    base="$(basename "$agent_file" .md)"
+    if md="$(translate_agent_to_antigravity_md "$agent_file" "$plugin_name")"; then
+      mkdir -p "$antigravity_agents_dir"
+      printf '%s' "$md" > "$antigravity_agents_dir/$plugin_name-$base.md"
+    else
+      failed=1
+    fi
+  done
+  return $failed
+}
+
+# --- Hook translation (Claude hooks.json -> Codex / Antigravity) ---
+#
+# Ported only for events confirmed to exist in the target's own vocabulary
+# (developers.openai.com/codex/hooks; antigravity.google/docs/hooks/) —
+# every other declared event is left alone, not guessed at. Both targets'
+# hooks.json shapes were confirmed against official docs before writing
+# any of this, following the same discipline as the agent translators.
+#
+# ~/.codex/hooks.json is one file shared by every plugin, and JSON has no
+# comment syntax to mark a managed region the way config.toml's TOML
+# merge does — so this tool treats that whole file as fully managed and
+# regenerates it from the current roster every sync, same as it already
+# treats the Antigravity plugins folder. A hand-written Codex hooks.json
+# belongs in a different config layer (e.g. a project's own .codex/), not
+# merged into this one.
+
+CODEX_HOOK_EVENTS='["PreToolUse","PostToolUse","Stop","UserPromptSubmit","SessionStart"]'
+ANTIGRAVITY_HOOK_EVENTS='["PreToolUse","PostToolUse","Stop"]'
+
+translate_hooks_to_codex_json() {
+  local hooks_json_path="$1" plugin_dir="$2"
+  local raw
+
+  if ! raw="$(jq -c '.hooks // {}' "$hooks_json_path" 2>/dev/null)"; then
+    echo "Failed to parse '$hooks_json_path' as JSON" >&2
+    return 1
+  fi
+
+  jq -c --arg dir "$plugin_dir" --argjson events "$CODEX_HOOK_EVENTS" '
+    to_entries
+    | map(select(.key as $k | $events | index($k)))
+    | map(.value |= map(
+        (if has("matcher") then {matcher: .matcher} else {} end)
+        + {hooks: (.hooks | map(
+            (if has("timeout") then {timeout: .timeout} else {} end)
+            + {type: (.type // "command"),
+               command: ((.command // "") | gsub("\\$\\{CLAUDE_PLUGIN_ROOT\\}"; $dir))}
+          ))}
+      ))
+    | from_entries
+  ' <<< "$raw"
+}
+
+merge_codex_hooks_json() {
+  local hooks_config_path="$1"
+  shift
+  local combined="{}" plugin hooks_json
+
+  while [ $# -ge 2 ]; do
+    plugin="$1"; hooks_json="$2"
+    shift 2
+    if [ -z "$hooks_json" ] || [ "$hooks_json" = "{}" ]; then
+      continue
+    fi
+    if ! combined="$(jq -c -n --argjson a "$combined" --argjson b "$hooks_json" '
+      reduce ($b | to_entries[]) as $e ($a; .[$e.key] = ((.[$e.key] // []) + $e.value))
+    ' 2>/dev/null)"; then
+      echo "Failed to merge hooks for plugin '$plugin' into '$hooks_config_path'" >&2
+      return 1
+    fi
+  done
+
+  mkdir -p "$(dirname "$hooks_config_path")"
+  jq -n --argjson h "$combined" '{hooks: $h}' > "$hooks_config_path"
+}
+
+translate_hooks_to_antigravity_json() {
+  local hooks_json_path="$1" plugin_dir="$2" plugin_name="$3"
+  local raw events
+
+  if ! raw="$(jq -c '.hooks // {}' "$hooks_json_path" 2>/dev/null)"; then
+    echo "Failed to parse '$hooks_json_path' as JSON" >&2
+    return 1
+  fi
+
+  events="$(jq -c --arg dir "$plugin_dir" --argjson events "$ANTIGRAVITY_HOOK_EVENTS" '
+    to_entries
+    | map(select(.key as $k | $events | index($k)))
+    | map(.value |= map(
+        (if has("matcher") then {matcher: .matcher} else {} end)
+        + {hooks: (.hooks | map(
+            (if has("timeout") then {timeout: .timeout} else {} end)
+            + {type: (.type // "command"),
+               command: ((.command // "") | gsub("\\$\\{CLAUDE_PLUGIN_ROOT\\}"; $dir))}
+          ))}
+      ))
+    | from_entries
+  ' <<< "$raw")"
+
+  if [ "$events" = "{}" ]; then
+    return 0
+  fi
+  jq -n --arg name "$plugin_name" --argjson events "$events" '{($name): $events}'
+}
+
+write_antigravity_hooks_json() {
+  local plugin_staged_dir="$1"
+  local json_content="$2"
+  [ -n "$json_content" ] || return 0
+  mkdir -p "$plugin_staged_dir"
+  printf '%s' "$json_content" > "$plugin_staged_dir/hooks.json"
+}
+
+# --- Commands gap report ---
+#
+# Hand re-authoring ~100 commands across 39 plugins as skills is an
+# explicit non-goal (re-forking on every upstream update, a content
+# project rather than mechanical translation) — this just names what
+# exists and isn't ported, per plugin, so the gap is visible rather than
+# silently absent.
+
+generate_command_gap_report() {
+  local repo_root="$1" vendor_cache_dir="$2"
+  local report_path="$repo_root/bootstrap/command-gap-report.md"
+  local mp_json mp_name declared plugin resolved_json resolve_failure plugin_dir
+  local commands_root cmd_file names total=0 plugins_with_commands=0
+
+  {
+    echo "# Command gap report"
+    echo
+    echo "Generated by bootstrap/sync.sh from the declared external roster."
+    echo "Commands are Claude Code slash-command definitions. Hand re-authoring"
+    echo "them as skills for Codex/Antigravity is an explicit non-goal (see"
+    echo "\`docs/superpowers/specs/2026-08-27-completion-milestone-design.md\`,"
+    echo "Spec 4) — this names what exists and is not ported, per plugin,"
+    echo "rather than leaving the gap silent."
+    echo
+
+    while IFS= read -r mp_json; do
+      [ -n "$mp_json" ] || continue
+      mp_name="$(echo "$mp_json" | jq -r '.name')"
+
+      while IFS= read -r declared; do
+        plugin="$(echo "$declared" | jq -r '.name')"
+        [ -n "$plugin" ] || continue
+        resolved_json="$(resolve_plugin_dir "$repo_root" "$vendor_cache_dir" "$mp_json" "$declared")"
+        resolve_failure="$(echo "$resolved_json" | jq -r '.failure')"
+        [ -z "$resolve_failure" ] || continue
+        plugin_dir="$(echo "$resolved_json" | jq -r '.dir')"
+
+        commands_root="$plugin_dir/commands"
+        [ -d "$commands_root" ] || continue
+        names=""
+        for cmd_file in "$commands_root"/*.md; do
+          [ -f "$cmd_file" ] || continue
+          names="$names $(basename "$cmd_file" .md)"
+          total=$((total + 1))
+        done
+        [ -n "$names" ] || continue
+        plugins_with_commands=$((plugins_with_commands + 1))
+        echo "- **$plugin** (from $mp_name):$names"
+      done < <(get_declared_plugins "$mp_json")
+    done < <(get_external_marketplaces_json "$repo_root")
+
+    echo
+    echo "$plugins_with_commands plugin(s), $total command(s) total — none ported."
+  } > "$report_path"
 }
 
 normalize_external_mcp_servers_json() {
@@ -572,10 +896,13 @@ sync_external_codex_content() {
   local vendor_cache_dir="$2"
   local codex_skills_dir="$3"
   local codex_config_path="$4"
+  local codex_agents_dir="$5"
+  local codex_hooks_config_path="$6"
 
   local failed=0
   local merge_args=()
-  local mp_json name plugin_line plugin resolved_json resolve_failure plugin_dir skills_root mcp_path mcp_servers toml
+  local hooks_merge_args=()
+  local mp_json name plugin_line plugin resolved_json resolve_failure plugin_dir skills_root mcp_path mcp_servers toml hooks_path hooks_json
 
   while IFS= read -r mp_json; do
     [ -n "$mp_json" ] || continue
@@ -625,12 +952,33 @@ sync_external_codex_content() {
           failed=1
         fi
       fi
+
+      if ! sync_plugin_agents_codex "$plugin_dir" "$plugin" "$codex_agents_dir"; then
+        failed=1
+      fi
+
+      hooks_path="$plugin_dir/hooks/hooks.json"
+      if [ -f "$hooks_path" ]; then
+        if hooks_json="$(translate_hooks_to_codex_json "$hooks_path" "$plugin_dir")"; then
+          hooks_merge_args+=("$plugin" "$hooks_json")
+        else
+          echo "Plugin '$plugin' (from '$name'): hook translation to Codex failed" >&2
+          failed=1
+        fi
+      fi
     done < <(get_declared_plugins "$mp_json")
   done < <(get_external_marketplaces_json "$repo_root")
 
   if [ ${#merge_args[@]} -gt 0 ]; then
     if ! merge_codex_mcp_config "$codex_config_path" "${merge_args[@]}"; then
       echo "Failed to merge translated MCP servers into '$codex_config_path'" >&2
+      failed=1
+    fi
+  fi
+
+  if [ ${#hooks_merge_args[@]} -gt 0 ]; then
+    if ! merge_codex_hooks_json "$codex_hooks_config_path" "${hooks_merge_args[@]}"; then
+      echo "Failed to merge translated hooks into '$codex_hooks_config_path'" >&2
       failed=1
     fi
   fi
@@ -643,10 +991,11 @@ sync_external_antigravity_content() {
   local vendor_cache_dir="$2"
   local staged_dir="$3"
   local antigravity_plugins_dir="$4"
+  local antigravity_agents_dir="$5"
 
   local failed=0
   local mp_json name plugin_line plugin resolved_json resolve_failure plugin_dir staged_plugin_dir
-  local skills_source mcp_path mcp_servers config final_link
+  local skills_source mcp_path mcp_servers config final_link hooks_path hooks_json
 
   while IFS= read -r mp_json; do
     [ -n "$mp_json" ] || continue
@@ -697,9 +1046,27 @@ sync_external_antigravity_content() {
         fi
       fi
 
+      hooks_path="$plugin_dir/hooks/hooks.json"
+      if [ -f "$hooks_path" ]; then
+        if hooks_json="$(translate_hooks_to_antigravity_json "$hooks_path" "$plugin_dir" "$plugin")"; then
+          write_antigravity_hooks_json "$staged_plugin_dir" "$hooks_json"
+        else
+          echo "Plugin '$plugin' (from '$name'): hook translation to Antigravity failed" >&2
+          failed=1
+        fi
+      fi
+
       final_link="$antigravity_plugins_dir/$plugin"
       if ! new_or_repair_symlink "$final_link" "$staged_plugin_dir"; then
         echo "Plugin '$plugin' (from '$name'): failed to link into Antigravity plugins dir" >&2
+        failed=1
+      fi
+
+      # Agents are not a plugin-level file per Antigravity's own docs (only
+      # skills/, mcp_config.json, hooks.json, rules/ are) — they live in a
+      # separate global directory, so they're written there directly
+      # rather than staged alongside the plugin.
+      if ! sync_plugin_agents_antigravity "$plugin_dir" "$plugin" "$antigravity_agents_dir"; then
         failed=1
       fi
     done < <(get_declared_plugins "$mp_json")
@@ -980,18 +1347,20 @@ run_stage() {
 VENDOR_CACHE_DIR="$REPO_ROOT/.vendor-cache"
 STAGED_DIR="$VENDOR_CACHE_DIR/_staged"
 CODEX_CONFIG_PATH="$HOME/.codex/config.toml"
+CODEX_HOOKS_CONFIG_PATH="$HOME/.codex/hooks.json"
 
 overall_failed=0
 
-run_stage "codex-skills" codex_capability sync_codex_skills "$REPO_ROOT" "$CODEX_SKILLS_DIR"
-run_stage "antigravity-plugins" antigravity_capability sync_antigravity_plugins "$REPO_ROOT" "$ANTIGRAVITY_PLUGINS_DIR"
+run_stage "codex-skills" codex_capability sync_codex_skills "$REPO_ROOT" "$CODEX_SKILLS_DIR" || true
+run_stage "antigravity-plugins" antigravity_capability sync_antigravity_plugins "$REPO_ROOT" "$ANTIGRAVITY_PLUGINS_DIR" || true
 
-run_stage "vendor-cache" vendor_cache_capability sync_vendor_cache "$REPO_ROOT" "$VENDOR_CACHE_DIR"
-run_stage "external-codex-content" codex_capability sync_external_codex_content "$REPO_ROOT" "$VENDOR_CACHE_DIR" "$CODEX_SKILLS_DIR" "$CODEX_CONFIG_PATH"
-run_stage "external-antigravity-content" antigravity_capability sync_external_antigravity_content "$REPO_ROOT" "$VENDOR_CACHE_DIR" "$STAGED_DIR" "$ANTIGRAVITY_PLUGINS_DIR"
+run_stage "vendor-cache" vendor_cache_capability sync_vendor_cache "$REPO_ROOT" "$VENDOR_CACHE_DIR" || true
+run_stage "command-gap-report" vendor_cache_capability generate_command_gap_report "$REPO_ROOT" "$VENDOR_CACHE_DIR" || true
+run_stage "external-codex-content" codex_capability sync_external_codex_content "$REPO_ROOT" "$VENDOR_CACHE_DIR" "$CODEX_SKILLS_DIR" "$CODEX_CONFIG_PATH" "$CODEX_AGENTS_DIR" "$CODEX_HOOKS_CONFIG_PATH" || true
+run_stage "external-antigravity-content" antigravity_capability sync_external_antigravity_content "$REPO_ROOT" "$VENDOR_CACHE_DIR" "$STAGED_DIR" "$ANTIGRAVITY_PLUGINS_DIR" "$ANTIGRAVITY_AGENTS_DIR" || true
 
-run_stage "claude-code-marketplace" claude_code_capability sync_claude_code_marketplace "$REPO_ROOT"
-run_stage "account-bundles" always_capability sync_account_bundles "$REPO_ROOT" "$VENDOR_CACHE_DIR/_staged/claude-ai"
+run_stage "claude-code-marketplace" claude_code_capability sync_claude_code_marketplace "$REPO_ROOT" || true
+run_stage "account-bundles" always_capability sync_account_bundles "$REPO_ROOT" "$VENDOR_CACHE_DIR/_staged/claude-ai" || true
 
 echo
 echo "--- Sync summary ---"

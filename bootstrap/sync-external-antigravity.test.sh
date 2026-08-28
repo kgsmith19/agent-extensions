@@ -14,6 +14,7 @@ DECLARE_ROOT="$SCRATCH/declare-root"
 VENDOR_CACHE="$SCRATCH/vendor-cache"
 STAGED_DIR="$SCRATCH/staged"
 ANTIGRAVITY_DIR="$SCRATCH/gemini-plugins"
+ANTIGRAVITY_AGENTS_DIR="$SCRATCH/gemini-agents"
 mkdir -p "$DECLARE_ROOT/bootstrap" "$ANTIGRAVITY_DIR"
 
 REPO_DIR="$SCRATCH/plugin-repo"
@@ -33,7 +34,7 @@ failures=()
 
 STDERR_CAPTURE="$SCRATCH/stderr-capture.txt"
 REPORTED_OK=1
-sync_external_antigravity_content "$DECLARE_ROOT" "$VENDOR_CACHE" "$STAGED_DIR" "$ANTIGRAVITY_DIR" 2>"$STDERR_CAPTURE" || REPORTED_OK=0
+sync_external_antigravity_content "$DECLARE_ROOT" "$VENDOR_CACHE" "$STAGED_DIR" "$ANTIGRAVITY_DIR" "$ANTIGRAVITY_AGENTS_DIR" 2>"$STDERR_CAPTURE" || REPORTED_OK=0
 if [ "$REPORTED_OK" = "1" ]; then
   failures+=("Expected sync_external_antigravity_content to return non-zero for delta-malformed/epsilon-invalid-json, it returned 0")
 fi

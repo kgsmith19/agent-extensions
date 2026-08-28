@@ -11,6 +11,7 @@ $declareRoot = Join-Path $scratch "declare-root"
 $vendorCache = Join-Path $scratch "vendor-cache"
 $stagedDir = Join-Path $scratch "staged"
 $antigravityPluginsDir = Join-Path $scratch "gemini-plugins"
+$antigravityAgentsDir = Join-Path $scratch "gemini-agents"
 New-Item -ItemType Directory -Path (Join-Path $declareRoot "bootstrap") -Force | Out-Null
 New-Item -ItemType Directory -Path $antigravityPluginsDir -Force | Out-Null
 
@@ -27,7 +28,7 @@ Set-Content -Path (Join-Path $declareRoot "bootstrap\external-marketplaces.json"
 Sync-VendorCache -RepoRoot $declareRoot -VendorCacheDir $vendorCache | Out-Null
 
 $failures = @()
-$reported = Sync-ExternalAntigravityContent -RepoRoot $declareRoot -VendorCacheDir $vendorCache -StagedDir $stagedDir -AntigravityPluginsDir $antigravityPluginsDir
+$reported = Sync-ExternalAntigravityContent -RepoRoot $declareRoot -VendorCacheDir $vendorCache -StagedDir $stagedDir -AntigravityPluginsDir $antigravityPluginsDir -AntigravityAgentsDir $antigravityAgentsDir
 
 if ($reported.Count -eq 0) {
     $failures += "Expected a reported failure for delta-malformed, got none"
