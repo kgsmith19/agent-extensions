@@ -5,7 +5,8 @@ param(
     [string]$CodexSkillsDir = (Join-Path $HOME ".agents\skills"),
     [string]$AntigravityPluginsDir = (Join-Path $HOME ".gemini\config\plugins"),
     [switch]$SkipClaudeCode,
-    [switch]$Import  # when set, only defines functions (used by sync.test.ps1)
+    [switch]$Import,  # when set, only defines functions (used by sync.test.ps1)
+    [switch]$ConfirmAccountApplied
 )
 
 $CodexSkillsDirOverridden = $PSBoundParameters.ContainsKey('CodexSkillsDir')
@@ -815,6 +816,110 @@ function Sync-ClaudeCodeMarketplace {
     return $failures
 }
 
+# --- claude.ai account surface ---
+#
+# No upload API exists for account-level Skills, so this module can only
+# stage upload-ready bundles and print an ordered checklist against the
+# last confirmed state — never touch the account itself.
+
+function Get-AccountManifestJson {
+    param([string]$RepoRoot)
+    $path = Join-Path $RepoRoot "bootstrap\account-manifest.json"
+    if (-not (Test-Path $path)) { return [PSCustomObject]@{ skills = @(); connectors = @() } }
+    $json = Get-Content $path -Raw | ConvertFrom-Json
+    $skills = if ($json.PSObject.Properties['skills']) { @($json.skills) } else { @() }
+    $connectors = if ($json.PSObject.Properties['connectors']) { @($json.connectors) } else { @() }
+    return [PSCustomObject]@{ skills = $skills; connectors = $connectors }
+}
+
+function Get-AccountLastAppliedJson {
+    param([string]$RepoRoot)
+    $path = Join-Path $RepoRoot "bootstrap\account-manifest.last-applied.json"
+    if (-not (Test-Path $path)) { return [PSCustomObject]@{ skills = @(); connectors = @() } }
+    $json = Get-Content $path -Raw | ConvertFrom-Json
+    $skills = if ($json.PSObject.Properties['skills']) { @($json.skills) } else { @() }
+    $connectors = if ($json.PSObject.Properties['connectors']) { @($json.connectors) } else { @() }
+    return [PSCustomObject]@{ skills = $skills; connectors = $connectors }
+}
+
+function Copy-AccountSkillBundle {
+    param([string]$RepoRoot, [string]$StagedDir, [string]$SkillName, [string]$SourceRelPath)
+    $sourceDir = Join-Path $RepoRoot $SourceRelPath
+    if (-not (Test-Path $sourceDir)) {
+        Write-Host "Account skill '$SkillName': declared source '$SourceRelPath' does not exist"
+        return $false
+    }
+    $destDir = Join-Path $StagedDir $SkillName
+    if (Test-Path $destDir) { Remove-Item -Recurse -Force $destDir }
+    New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+    # A real copy, not a live link — this bundle is meant to be uploaded
+    # through the claude.ai UI, which does not resolve links.
+    Copy-Item -Path (Join-Path $sourceDir "*") -Destination $destDir -Recurse -Force
+    return $true
+}
+
+function Write-AccountChecklist {
+    param([string]$RepoRoot)
+    $current = Get-AccountManifestJson -RepoRoot $RepoRoot
+    $lastApplied = Get-AccountLastAppliedJson -RepoRoot $RepoRoot
+
+    $curSkillNames = @($current.skills | ForEach-Object { $_.name })
+    $lastSkillNames = @($lastApplied.skills | ForEach-Object { $_.name })
+    $curConnectorNames = @($current.connectors | ForEach-Object { $_.name })
+    $lastConnectorNames = @($lastApplied.connectors | ForEach-Object { $_.name })
+
+    $addSkills = @($curSkillNames | Where-Object { $_ -notin $lastSkillNames })
+    $removeSkills = @($lastSkillNames | Where-Object { $_ -notin $curSkillNames })
+    $addConnectors = @($curConnectorNames | Where-Object { $_ -notin $lastConnectorNames })
+    $removeConnectors = @($lastConnectorNames | Where-Object { $_ -notin $curConnectorNames })
+
+    $adds = @($addSkills | ForEach-Object { "skill: $_" }) + @($addConnectors | ForEach-Object { "connector: $_" })
+    $removes = @($removeSkills | ForEach-Object { "skill: $_" }) + @($removeConnectors | ForEach-Object { "connector: $_" })
+
+    if ($adds.Count -eq 0 -and $removes.Count -eq 0) {
+        Write-Host "claude.ai account: up to date with last-applied state."
+        return
+    }
+
+    Write-Host "claude.ai account checklist (manual — no upload API exists):"
+    if ($adds.Count -gt 0) {
+        Write-Host "  ADD:"
+        $adds | ForEach-Object { Write-Host "    - $_" }
+    }
+    if ($removes.Count -gt 0) {
+        Write-Host "  REMOVE:"
+        $removes | ForEach-Object { Write-Host "    - $_" }
+    }
+    Write-Host "  After applying by hand on claude.ai, run: bootstrap/sync.ps1 -ConfirmAccountApplied"
+}
+
+function Sync-AccountBundles {
+    param([string]$RepoRoot, [string]$StagedDir)
+    $manifest = Get-AccountManifestJson -RepoRoot $RepoRoot
+    if (-not (Test-Path $StagedDir)) { New-Item -ItemType Directory -Path $StagedDir -Force | Out-Null }
+
+    $failures = @()
+    foreach ($skill in $manifest.skills) {
+        if (-not (Copy-AccountSkillBundle -RepoRoot $RepoRoot -StagedDir $StagedDir -SkillName $skill.name -SourceRelPath $skill.source)) {
+            $failures += "Account skill '$($skill.name)': declared source '$($skill.source)' does not exist"
+        }
+    }
+
+    Write-AccountChecklist -RepoRoot $RepoRoot
+    return $failures
+}
+
+function Confirm-AccountApplied {
+    param([string]$RepoRoot)
+    $manifestPath = Join-Path $RepoRoot "bootstrap\account-manifest.json"
+    $lastAppliedPath = Join-Path $RepoRoot "bootstrap\account-manifest.last-applied.json"
+    if (-not (Test-Path $manifestPath)) {
+        throw "cannot confirm: '$manifestPath' does not exist"
+    }
+    Copy-Item -Path $manifestPath -Destination $lastAppliedPath -Force
+    Write-Output "Recorded current account-manifest.json as last-applied."
+}
+
 # --- Capability detection ---
 #
 # Each stage is gated on whether its target surface actually exists on this
@@ -894,6 +999,11 @@ function Invoke-Stage {
 
 if ($Import) { return }
 
+if ($ConfirmAccountApplied) {
+    Confirm-AccountApplied -RepoRoot $RepoRoot
+    exit 0
+}
+
 $vendorCacheDir = Join-Path $RepoRoot ".vendor-cache"
 $stagedDir = Join-Path $vendorCacheDir "_staged"
 $codexConfigPath = Join-Path $HOME ".codex\config.toml"
@@ -924,6 +1034,9 @@ Invoke-Stage -StageName "external-antigravity-content" -Capability $antigravityC
 
 Invoke-Stage -StageName "claude-code-marketplace" -Capability $claudeCodeCap -RunFn {
     Sync-ClaudeCodeMarketplace -RepoRoot $RepoRoot
+}
+Invoke-Stage -StageName "account-bundles" -Capability @{ Available = $true } -RunFn {
+    Sync-AccountBundles -RepoRoot $RepoRoot -StagedDir (Join-Path $vendorCacheDir "_staged\claude-ai")
 }
 
 Write-Output ""

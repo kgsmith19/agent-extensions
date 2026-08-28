@@ -775,8 +775,121 @@ sync_claude_code_marketplace() {
   return $failed
 }
 
+# --- claude.ai account surface ---
+#
+# No upload API exists for account-level Skills, so this module can only
+# stage upload-ready bundles and print an ordered checklist against the
+# last confirmed state — never touch the account itself.
+
+get_account_manifest_json() {
+  local repo_root="$1"
+  local path="$repo_root/bootstrap/account-manifest.json"
+  if [ ! -f "$path" ]; then
+    jq -n '{skills: [], connectors: []}'
+    return 0
+  fi
+  jq -c '{skills: (.skills // []), connectors: (.connectors // [])}' "$path"
+}
+
+get_account_last_applied_json() {
+  local repo_root="$1"
+  local path="$repo_root/bootstrap/account-manifest.last-applied.json"
+  if [ ! -f "$path" ]; then
+    jq -n '{skills: [], connectors: []}'
+    return 0
+  fi
+  jq -c '{skills: (.skills // []), connectors: (.connectors // [])}' "$path"
+}
+
+stage_account_skill_bundle() {
+  local repo_root="$1" staged_dir="$2" skill_name="$3" source_rel_path="$4"
+  local source_dir="$repo_root/$source_rel_path"
+  if [ ! -d "$source_dir" ]; then
+    echo "Account skill '$skill_name': declared source '$source_rel_path' does not exist" >&2
+    return 1
+  fi
+  local dest_dir="$staged_dir/$skill_name"
+  rm -rf "$dest_dir"
+  mkdir -p "$dest_dir"
+  # A real copy, not a live link — this bundle is meant to be uploaded
+  # through the claude.ai UI, which does not resolve symlinks.
+  cp -R "$source_dir/." "$dest_dir/"
+}
+
+print_account_checklist() {
+  local repo_root="$1"
+  local current last_applied adds removes
+
+  current="$(get_account_manifest_json "$repo_root")"
+  last_applied="$(get_account_last_applied_json "$repo_root")"
+
+  adds="$(jq -rn --argjson cur "$current" --argjson last "$last_applied" '
+    ([$cur.skills[]?.name] - [$last.skills[]?.name] | map("skill: " + .)) +
+    ([$cur.connectors[]?.name] - [$last.connectors[]?.name] | map("connector: " + .))
+    | .[]')"
+  removes="$(jq -rn --argjson cur "$current" --argjson last "$last_applied" '
+    ([$last.skills[]?.name] - [$cur.skills[]?.name] | map("skill: " + .)) +
+    ([$last.connectors[]?.name] - [$cur.connectors[]?.name] | map("connector: " + .))
+    | .[]')"
+
+  if [ -z "$adds" ] && [ -z "$removes" ]; then
+    echo "claude.ai account: up to date with last-applied state."
+    return 0
+  fi
+
+  echo "claude.ai account checklist (manual — no upload API exists):"
+  if [ -n "$adds" ]; then
+    echo "  ADD:"
+    echo "$adds" | sed 's/^/    - /'
+  fi
+  if [ -n "$removes" ]; then
+    echo "  REMOVE:"
+    echo "$removes" | sed 's/^/    - /'
+  fi
+  echo "  After applying by hand on claude.ai, run: bootstrap/sync.sh --confirm-account-applied"
+}
+
+sync_account_bundles() {
+  local repo_root="$1" staged_dir="$2"
+  local manifest_json failed=0 skill_json name source
+
+  manifest_json="$(get_account_manifest_json "$repo_root")"
+  mkdir -p "$staged_dir"
+
+  while IFS= read -r skill_json; do
+    [ -n "$skill_json" ] || continue
+    name="$(echo "$skill_json" | jq -r '.name')"
+    source="$(echo "$skill_json" | jq -r '.source')"
+    if ! stage_account_skill_bundle "$repo_root" "$staged_dir" "$name" "$source"; then
+      failed=1
+    fi
+  done < <(echo "$manifest_json" | jq -c '.skills[]?')
+
+  print_account_checklist "$repo_root"
+
+  return $failed
+}
+
+confirm_account_applied() {
+  local repo_root="$1"
+  local manifest_path="$repo_root/bootstrap/account-manifest.json"
+  local last_applied_path="$repo_root/bootstrap/account-manifest.last-applied.json"
+
+  if [ ! -f "$manifest_path" ]; then
+    echo "cannot confirm: '$manifest_path' does not exist" >&2
+    return 1
+  fi
+  cp "$manifest_path" "$last_applied_path"
+  echo "Recorded current account-manifest.json as last-applied."
+}
+
 if [ "${1:-}" = "--import" ]; then
   return 0 2>/dev/null || exit 0
+fi
+
+if [ "${1:-}" = "--confirm-account-applied" ]; then
+  confirm_account_applied "$REPO_ROOT"
+  exit $?
 fi
 
 # --- Capability detection ---
@@ -878,6 +991,7 @@ run_stage "external-codex-content" codex_capability sync_external_codex_content 
 run_stage "external-antigravity-content" antigravity_capability sync_external_antigravity_content "$REPO_ROOT" "$VENDOR_CACHE_DIR" "$STAGED_DIR" "$ANTIGRAVITY_PLUGINS_DIR"
 
 run_stage "claude-code-marketplace" claude_code_capability sync_claude_code_marketplace "$REPO_ROOT"
+run_stage "account-bundles" always_capability sync_account_bundles "$REPO_ROOT" "$VENDOR_CACHE_DIR/_staged/claude-ai"
 
 echo
 echo "--- Sync summary ---"
