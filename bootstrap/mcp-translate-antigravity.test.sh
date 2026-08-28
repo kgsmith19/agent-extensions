@@ -16,7 +16,8 @@ STDIO_CONFIG="$(mcp_json_to_antigravity_config "$STDIO_JSON")"
 
 HTTP_JSON='{ "fixture-http": { "url": "https://fixture.example.com/mcp", "headers": { "Authorization": "Bearer FIXTURE_TOKEN" } } }'
 HTTP_CONFIG="$(mcp_json_to_antigravity_config "$HTTP_JSON")"
-[ "$(echo "$HTTP_CONFIG" | jq -r '.mcpServers."fixture-http".url')" = "https://fixture.example.com/mcp" ] || failures+=("http: url not preserved")
+[ "$(echo "$HTTP_CONFIG" | jq -r '.mcpServers."fixture-http".serverUrl')" = "https://fixture.example.com/mcp" ] || failures+=("http: url not translated to serverUrl (Antigravity's schema — url/httpUrl are documented as unsupported legacy fields)")
+[ "$(echo "$HTTP_CONFIG" | jq 'has("mcpServers") and (.mcpServers."fixture-http" | has("url") | not)')" = "true" ] || failures+=("http: legacy url field must not remain alongside serverUrl")
 [ "$(echo "$HTTP_CONFIG" | jq -r '.mcpServers."fixture-http".headers.Authorization')" = "Bearer FIXTURE_TOKEN" ] || failures+=("http: headers not preserved")
 
 EMPTY_CONFIG="$(mcp_json_to_antigravity_config '{}')"

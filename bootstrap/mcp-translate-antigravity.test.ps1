@@ -25,8 +25,11 @@ $http = @'
 '@ | ConvertFrom-Json
 $httpConfig = ConvertTo-AntigravityMcpConfig -McpServers $http
 $parsedHttp = $httpConfig | ConvertFrom-Json
-if ($parsedHttp.mcpServers.'fixture-http'.url -ne "https://fixture.example.com/mcp") {
-    $failures += "http: url not preserved in Antigravity config"
+if ($parsedHttp.mcpServers.'fixture-http'.serverUrl -ne "https://fixture.example.com/mcp") {
+    $failures += "http: url not translated to serverUrl in Antigravity config (url/httpUrl are documented as unsupported legacy fields)"
+}
+if ($parsedHttp.mcpServers.'fixture-http'.PSObject.Properties['url']) {
+    $failures += "http: legacy url field must not remain alongside serverUrl in Antigravity config"
 }
 if ($parsedHttp.mcpServers.'fixture-http'.headers.Authorization -ne "Bearer FIXTURE_TOKEN") {
     $failures += "http: headers not preserved in Antigravity config"

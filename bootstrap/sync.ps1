@@ -866,6 +866,18 @@ function ConvertTo-AntigravityMcpConfig {
         if ($unknown.Count -gt 0) {
             throw "MCP server '$serverName' has unrecognized field(s): $($unknown -join ', ')."
         }
+
+        # Antigravity's schema requires "serverUrl" for HTTP servers — "url"
+        # and "httpUrl" are explicitly documented as unsupported legacy
+        # field names (antigravity.google/docs/cli/mcp), confirmed directly
+        # against the real CLI: `agy plugin validate` rejected a translated
+        # "url" field with "must have either command or serverUrl".
+        # Renamed only for entries that actually have "url" — stdio entries
+        # (which use "command") pass through unchanged.
+        if ($hasUrl) {
+            $server | Add-Member -MemberType NoteProperty -Name 'serverUrl' -Value $server.url
+            $server.PSObject.Properties.Remove('url')
+        }
     }
 
     $wrapped = [PSCustomObject]@{ mcpServers = $McpServers }

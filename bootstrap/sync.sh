@@ -841,7 +841,18 @@ mcp_json_to_antigravity_config() {
     fi
   done <<< "$names"
 
-  jq -n --argjson servers "$mcp_servers_json" '{mcpServers: $servers}'
+  # Antigravity's schema requires "serverUrl" for HTTP servers — "url" and
+  # "httpUrl" are explicitly documented as unsupported legacy field names
+  # (antigravity.google/docs/cli/mcp), confirmed directly against the real
+  # CLI: `agy plugin validate` rejected a translated "url" field with
+  # "must have either command or serverUrl". Renamed only for entries that
+  # actually have "url" (the http-transport ones) — stdio entries (which
+  # use "command") pass through unchanged.
+  jq -n --argjson servers "$mcp_servers_json" '
+    {mcpServers: ($servers | map_values(
+      if has("url") then (. + {serverUrl: .url} | del(.url)) else . end
+    ))}
+  '
 }
 
 merge_codex_mcp_config() {
