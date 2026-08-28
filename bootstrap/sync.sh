@@ -9,6 +9,7 @@ ANTIGRAVITY_PLUGINS_DIR_OVERRIDDEN="${ANTIGRAVITY_PLUGINS_DIR:+1}"
 ANTIGRAVITY_PLUGINS_DIR="${ANTIGRAVITY_PLUGINS_DIR:-$HOME/.gemini/config/plugins}"
 ANTIGRAVITY_AGENTS_DIR="${ANTIGRAVITY_AGENTS_DIR:-$HOME/.gemini/config/agents}"
 SKIP_CLAUDE_CODE="${SKIP_CLAUDE_CODE:-}"
+HOOK_ENV_WRAPPER="$REPO_ROOT/bootstrap/hook_env_wrapper.py"
 
 get_plugin_names() {
   local repo_root="$1"
@@ -284,6 +285,24 @@ sync_plugin_agents_antigravity() {
 CODEX_HOOK_EVENTS='["PreToolUse","PostToolUse","Stop","UserPromptSubmit","SessionStart"]'
 ANTIGRAVITY_HOOK_EVENTS='["PreToolUse","PostToolUse","Stop"]'
 
+# wrap_hook_for_env(): inlined identically into both translate_hooks_to_*_json
+# functions below (matching this file's existing convention of duplicating
+# each jq program's own logic rather than factoring it out — see the
+# ${CLAUDE_PLUGIN_ROOT} gsub already duplicated the same way). Neither
+# Codex's nor Antigravity's hooks.json schema has an env field (confirmed
+# against their published docs) — only Claude Code sets CLAUDE_PLUGIN_ROOT
+# as an actual environment variable for the spawned hook process, in
+# addition to substituting it into the command string. A hook script that
+# reads os.environ['CLAUDE_PLUGIN_ROOT'] itself (e.g. to import sibling
+# modules, as hookify's hooks/*.py do for their core/ package) silently
+# no-ops on both targets without this. Only rewrites the one confirmed-real
+# shape (`python3 "<script>"`, nothing else appended) produced by
+# substituting ${CLAUDE_PLUGIN_ROOT} into a plugin's own hooks.json —
+# anything else is left untouched rather than guessed at. Kept as a
+# single-quoted jq program (no bash interpolation of the def body) so
+# jq's own $-variable syntax never has to survive bash double-quote
+# escaping.
+
 translate_hooks_to_codex_json() {
   local hooks_json_path="$1" plugin_dir="$2"
   local raw
@@ -293,7 +312,15 @@ translate_hooks_to_codex_json() {
     return 1
   fi
 
-  jq -c --arg dir "$plugin_dir" --argjson events "$CODEX_HOOK_EVENTS" '
+  jq -c --arg dir "$plugin_dir" --arg wrapper "$HOOK_ENV_WRAPPER" --argjson events "$CODEX_HOOK_EVENTS" '
+    def wrap_hook_for_env($dir; $wrapper):
+      . as $cmd
+      | if ($cmd | test("^python3?\\s+\"[^\"]+\"$")) then
+          ($cmd | capture("^python3?\\s+\"(?<script>[^\"]+)\"$")) as $m
+          | "python3 " + ([$wrapper, $dir, $m.script] | map(tojson) | join(" "))
+        else
+          $cmd
+        end;
     to_entries
     | map(select(.key as $k | $events | index($k)))
     | map(.value |= map(
@@ -301,7 +328,7 @@ translate_hooks_to_codex_json() {
         + {hooks: (.hooks | map(
             (if has("timeout") then {timeout: .timeout} else {} end)
             + {type: (.type // "command"),
-               command: ((.command // "") | gsub("\\$\\{CLAUDE_PLUGIN_ROOT\\}"; $dir))}
+               command: (((.command // "") | gsub("\\$\\{CLAUDE_PLUGIN_ROOT\\}"; $dir)) | wrap_hook_for_env($dir; $wrapper))}
           ))}
       ))
     | from_entries
@@ -340,7 +367,15 @@ translate_hooks_to_antigravity_json() {
     return 1
   fi
 
-  events="$(jq -c --arg dir "$plugin_dir" --argjson events "$ANTIGRAVITY_HOOK_EVENTS" '
+  events="$(jq -c --arg dir "$plugin_dir" --arg wrapper "$HOOK_ENV_WRAPPER" --argjson events "$ANTIGRAVITY_HOOK_EVENTS" '
+    def wrap_hook_for_env($dir; $wrapper):
+      . as $cmd
+      | if ($cmd | test("^python3?\\s+\"[^\"]+\"$")) then
+          ($cmd | capture("^python3?\\s+\"(?<script>[^\"]+)\"$")) as $m
+          | "python3 " + ([$wrapper, $dir, $m.script] | map(tojson) | join(" "))
+        else
+          $cmd
+        end;
     to_entries
     | map(select(.key as $k | $events | index($k)))
     | map(.value |= map(
@@ -348,7 +383,7 @@ translate_hooks_to_antigravity_json() {
         + {hooks: (.hooks | map(
             (if has("timeout") then {timeout: .timeout} else {} end)
             + {type: (.type // "command"),
-               command: ((.command // "") | gsub("\\$\\{CLAUDE_PLUGIN_ROOT\\}"; $dir))}
+               command: (((.command // "") | gsub("\\$\\{CLAUDE_PLUGIN_ROOT\\}"; $dir)) | wrap_hook_for_env($dir; $wrapper))}
           ))}
       ))
     | from_entries

@@ -38,8 +38,9 @@ done
 if echo "$codex_json" | jq -e 'has("NotAnEvent")' >/dev/null; then
   failures+=("Codex translation must drop events not in Codex's documented vocabulary")
 fi
-if ! echo "$codex_json" | jq -e '.PreToolUse[0].hooks[0].command == "python3 \"/plugins/demo/hooks/pre.py\""' >/dev/null; then
-  failures+=("Codex translation must rewrite \${CLAUDE_PLUGIN_ROOT} to the resolved absolute plugin dir")
+expected_codex_cmd="python3 \"$HOOK_ENV_WRAPPER\" \"/plugins/demo\" \"/plugins/demo/hooks/pre.py\""
+if ! echo "$codex_json" | jq -e --arg expected "$expected_codex_cmd" '.PreToolUse[0].hooks[0].command == $expected' >/dev/null; then
+  failures+=("Codex translation must rewrite \${CLAUDE_PLUGIN_ROOT} to the resolved absolute plugin dir and wrap python3 commands for CLAUDE_PLUGIN_ROOT env propagation")
 fi
 if echo "$codex_json" | jq -e '.SessionStart[0].hooks[0] | has("shell") or has("async")' >/dev/null; then
   failures+=("Codex translation must drop fields (shell, async) that aren't in Codex's documented hook schema")
@@ -55,6 +56,10 @@ if ! echo "$antigravity_json" | jq -e '."demo-plugin" | has("PreToolUse")' >/dev
 fi
 if echo "$antigravity_json" | jq -e '."demo-plugin" | has("UserPromptSubmit") or has("SessionStart")' >/dev/null; then
   failures+=("Antigravity translation must not invent UserPromptSubmit/SessionStart support it doesn't document")
+fi
+expected_antigravity_cmd="python3 \"$HOOK_ENV_WRAPPER\" \"/plugins/demo\" \"/plugins/demo/hooks/pre.py\""
+if ! echo "$antigravity_json" | jq -e --arg expected "$expected_antigravity_cmd" '."demo-plugin".PreToolUse[0].hooks[0].command == $expected' >/dev/null; then
+  failures+=("Antigravity translation must also wrap python3 hook commands for CLAUDE_PLUGIN_ROOT env propagation")
 fi
 
 # --- A hooks.json with only non-overlapping Antigravity events produces no output ---
@@ -84,6 +89,54 @@ if command -v python3 >/dev/null 2>&1; then
   if ! python3 -c "import json; json.load(open('$merged_path'))" 2>"$SCRATCH/err.txt"; then
     failures+=("Merged hooks.json is not valid JSON: $(cat "$SCRATCH/err.txt")")
   fi
+fi
+
+# --- hook_env_wrapper.py: proves the actual failure mode and the fix, not just the string rewrite ---
+if command -v python3 >/dev/null 2>&1; then
+  mkdir -p "$SCRATCH/wraptest/core" "$SCRATCH/wraptest/hooks"
+  touch "$SCRATCH/wraptest/core/__init__.py"
+  cat > "$SCRATCH/wraptest/core/helper.py" <<'EOF'
+def greet():
+    return "hello from core"
+EOF
+  cat > "$SCRATCH/wraptest/hooks/myhook.py" <<'EOF'
+import os
+import sys
+PLUGIN_ROOT = os.environ.get('CLAUDE_PLUGIN_ROOT')
+if PLUGIN_ROOT and PLUGIN_ROOT not in sys.path:
+    sys.path.insert(0, PLUGIN_ROOT)
+try:
+    from core.helper import greet
+except ImportError as e:
+    print(f"IMPORT FAILED: {e}")
+    sys.exit(0)
+print(greet())
+EOF
+
+  # Without the fix (raw invocation, no CLAUDE_PLUGIN_ROOT in env): reproduces
+  # the exact silent-no-op failure mode this wrapper exists to fix.
+  raw_output="$(env -u CLAUDE_PLUGIN_ROOT python3 "$SCRATCH/wraptest/hooks/myhook.py" 2>&1)"
+  if [[ "$raw_output" != IMPORT\ FAILED* ]]; then
+    failures+=("Expected the unwrapped hook script to fail importing its sibling module without CLAUDE_PLUGIN_ROOT set (reproducing the bug) — got: $raw_output")
+  fi
+
+  # Through the wrapper, with the plugin dir passed explicitly: the import
+  # succeeds because CLAUDE_PLUGIN_ROOT is now actually in the environment.
+  wrapped_output="$(env -u CLAUDE_PLUGIN_ROOT python3 "$HOOK_ENV_WRAPPER" "$SCRATCH/wraptest" "$SCRATCH/wraptest/hooks/myhook.py" 2>&1)"
+  if [ "$wrapped_output" != "hello from core" ]; then
+    failures+=("Expected hook_env_wrapper.py to make CLAUDE_PLUGIN_ROOT available so the sibling-module import succeeds — got: $wrapped_output")
+  fi
+else
+  echo "python3 not found — skipping hook_env_wrapper.py end-to-end test"
+fi
+
+# --- A non-python command is left untouched, not guessed at ---
+cat > "$SCRATCH/nonpython-hooks.json" <<'EOF'
+{ "hooks": { "PreToolUse": [{ "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/pre.js\"" }] }] } }
+EOF
+nonpython_codex_json="$(translate_hooks_to_codex_json "$SCRATCH/nonpython-hooks.json" "/plugins/demo")"
+if ! echo "$nonpython_codex_json" | jq -e '.PreToolUse[0].hooks[0].command == "node \"/plugins/demo/hooks/pre.js\""' >/dev/null; then
+  failures+=("A non-python3 hook command must be left unwrapped (only the confirmed python3 \"<script>\" shape is rewritten)")
 fi
 
 rm -rf "$SCRATCH"
