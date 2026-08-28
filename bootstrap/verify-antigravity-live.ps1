@@ -132,8 +132,8 @@ if ($authProbe -match "authentication required") {
 }
 Write-Result "cli-authenticated" "PASS" "headless probe responded"
 
-# --- tool execution isn't blocked by an unrelated built-in hook ---
-$toolProbe = & agy -p "Run the shell command: echo AGENT_EXTENSIONS_TOOLCHECK" --output-format json 2>&1 | Out-String
+# --- Step 2: tool execution isn't blocked by an unrelated built-in hook ---
+$toolProbe = & agy -p "Run the shell command: echo AGENT_EXTENSIONS_TOOLCHECK" --output-format json --dangerously-skip-permissions 2>&1 | Out-String
 if ($toolProbe -notmatch "AGENT_EXTENSIONS_TOOLCHECK") {
     Write-Result "tool-execution" "FAIL" "A plain, unblocked shell command did not appear to execute -- something (possibly the googlecloudtools.datacloud_telemetry built-in hook seen earlier in this effort) may still be blocking the tool-execution pipeline before any repo-synced hook gets a chance to run. Raw output: $toolProbe"
     Write-Output ""; Write-Output "--- summary ---"
@@ -160,11 +160,13 @@ delete by hand; this script removes it automatically when done.
 "@ | Set-Content -Path $rulePath
 
 try {
-    $blockProbe = & agy -p "Run this exact shell command and tell me exactly what happened, including any denial or error message verbatim: echo AGENT_EXTENSIONS_HOOK_MARKER_87234" --output-format json 2>&1 | Out-String
+    # --- Step 4: ask agy to run the exact command that rule should block, for real ---
+    $blockProbe = & agy -p "Run this exact shell command and tell me exactly what happened, including any denial or error message verbatim: echo AGENT_EXTENSIONS_HOOK_MARKER_87234" --output-format json --dangerously-skip-permissions 2>&1 | Out-String
 
-    if ($blockProbe -match "AGENT_EXTENSIONS_HOOK_MARKER_87234" -and $blockProbe -notmatch "(?i)(denied|blocked|prevent)") {
+    # --- Step 5: interpret the result ---
+    if ($blockProbe -match "AGENT_EXTENSIONS_HOOK_MARKER_87234" -and $blockProbe -notmatch "(?i)(denied|blocked|prevent|hook)") {
         Write-Result "hook-fires-for-real" "FAIL" "The command that should have been blocked by hookify's rule appears to have run anyway. hookify's PreToolUse hook is NOT firing through Antigravity's real hook engine, even though it works correctly when invoked by hand (already proven in PR #2). Raw output: $blockProbe"
-    } elseif ($blockProbe -match "(?i)(denied|blocked|prevent)") {
+    } elseif ($blockProbe -match "(?i)(denied|blocked|prevent|hook)") {
         Write-Result "hook-fires-for-real" "PASS" "The command was blocked -- hookify's PreToolUse hook fired for real through Antigravity's hook engine. This closes the one remaining open question in the whole agent-extensions completion effort."
     } else {
         Write-Result "hook-fires-for-real" "INFO" "Inconclusive -- neither a clear block nor a clear pass-through was detected in the output. Read it directly rather than trusting this script's pattern-matching: $blockProbe"
@@ -173,6 +175,26 @@ try {
     Remove-Item -Path $rulePath -ErrorAction SilentlyContinue
 }
 
+# --- Step 6: are translated agents actually visible to agy? ---
+# Resolves the other open question from this effort: whether translated
+# agents at ~/.gemini/config/agents/ (this repo's implemented target) are
+# what Antigravity's CLI actually reads, or whether it needs a second
+# copy under ~/.gemini/antigravity-cli/agents/ instead (a real directory
+# on Kyle's machine, seen holding Antigravity's own built-in content, but
+# never confirmed as an agent-loading path this repo also needs to write).
+$probeAgentDir = Join-Path $HOME ".gemini/config/agents"
+$probeAgentFile = Get-ChildItem $probeAgentDir -Filter "*.md" -File -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($probeAgentFile) {
+    $probeAgentName = [System.IO.Path]::GetFileNameWithoutExtension($probeAgentFile.Name)
+    $agentProbe = & agy -p "List the names of your available custom agents or personas, exactly as they would be invoked." --output-format json --dangerously-skip-permissions 2>&1 | Out-String
+    if ($agentProbe -match [regex]::Escape($probeAgentName)) {
+        Write-Result "agents-visible" "PASS" "Translated agent '$probeAgentName' (from ~/.gemini/config/agents/) is visible to agy -- no second path needed."
+    } else {
+        Write-Result "agents-visible" "FAIL" "Translated agent '$probeAgentName' was not found in agy's own agent listing. ~/.gemini/config/agents/ may not be what the CLI reads -- check whether it also needs writing to ~/.gemini/antigravity-cli/agents/ (sync.ps1 -AntigravityAgentsDir can redirect there without a code change once confirmed). Raw output: $agentProbe"
+    }
+} else {
+    Write-Result "agents-visible" "INFO" "No translated agent files found at $probeAgentDir to probe with -- run bootstrap/sync.ps1 first."
+}
 Write-Output ""
 Write-Output "--- summary ---"
 foreach ($k in $results.Keys) {

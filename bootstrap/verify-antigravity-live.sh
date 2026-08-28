@@ -131,8 +131,8 @@ elif [ $auth_exit -ne 0 ]; then
 fi
 result "cli-authenticated" "PASS" "headless probe responded"
 
-# --- tool execution isn't blocked by an unrelated built-in hook ---
-tool_probe="$(agy -p "Run the shell command: echo AGENT_EXTENSIONS_TOOLCHECK" --output-format json 2>&1)"
+# --- Step 2: tool execution isn't blocked by an unrelated built-in hook ---
+tool_probe="$(agy -p "Run the shell command: echo AGENT_EXTENSIONS_TOOLCHECK" --output-format json --dangerously-skip-permissions 2>&1)"
 if ! echo "$tool_probe" | grep -q "AGENT_EXTENSIONS_TOOLCHECK"; then
   result "tool-execution" "FAIL" "A plain, unblocked shell command did not appear to execute -- something (possibly the googlecloudtools.datacloud_telemetry built-in hook seen earlier in this effort) may still be blocking the tool-execution pipeline before any repo-synced hook gets a chance to run. Raw output: $tool_probe"
   exit $failed
@@ -157,15 +157,36 @@ EOF
 cleanup() { rm -f "$rule_path"; }
 trap cleanup EXIT
 
-# --- ask agy to run the exact command that rule should block, for real ---
-block_probe="$(agy -p "Run this exact shell command and tell me exactly what happened, including any denial or error message verbatim: echo AGENT_EXTENSIONS_HOOK_MARKER_87234" --output-format json 2>&1)"
+# --- Step 4: ask agy to run the exact command that rule should block, for real ---
+block_probe="$(agy -p "Run this exact shell command and tell me exactly what happened, including any denial or error message verbatim: echo AGENT_EXTENSIONS_HOOK_MARKER_87234" --output-format json --dangerously-skip-permissions 2>&1)"
 
-if echo "$block_probe" | grep -q "AGENT_EXTENSIONS_HOOK_MARKER_87234" && ! echo "$block_probe" | grep -qiE "denied|blocked|prevent"; then
+# --- Step 5: interpret the result ---
+if echo "$block_probe" | grep -q "AGENT_EXTENSIONS_HOOK_MARKER_87234" && ! echo "$block_probe" | grep -qiE "denied|blocked|prevent|hook"; then
   result "hook-fires-for-real" "FAIL" "The command that should have been blocked by hookify's rule appears to have run anyway. hookify's PreToolUse hook is NOT firing through Antigravity's real hook engine, even though it works correctly when invoked by hand (already proven in PR #2). Raw output: $block_probe"
-elif echo "$block_probe" | grep -qiE "denied|blocked|prevent"; then
+elif echo "$block_probe" | grep -qiE "denied|blocked|prevent|hook"; then
   result "hook-fires-for-real" "PASS" "The command was blocked -- hookify's PreToolUse hook fired for real through Antigravity's hook engine. This closes the one remaining open question in the whole agent-extensions completion effort."
 else
   result "hook-fires-for-real" "INFO" "Inconclusive -- neither a clear block nor a clear pass-through was detected in the output. Read it directly rather than trusting this script's pattern-matching: $block_probe"
 fi
 
+# --- Step 7: are translated agents actually visible to agy? ---
+# Resolves the other open question from this effort: whether translated
+# agents at ~/.gemini/config/agents/ (this repo's implemented target) are
+# what Antigravity's CLI actually reads, or whether it needs a second copy
+# under ~/.gemini/antigravity-cli/agents/ instead (a real directory on
+# Kyle's machine, seen holding Antigravity's own built-in content, but
+# never confirmed as an agent-loading path this repo also needs to write).
+probe_agent_dir="$HOME/.gemini/config/agents"
+probe_agent_file="$(find "$probe_agent_dir" -maxdepth 1 -name '*.md' -type f 2>/dev/null | head -1)"
+if [ -n "$probe_agent_file" ]; then
+  probe_agent_name="$(basename "$probe_agent_file" .md)"
+  agent_probe="$(agy -p "List the names of your available custom agents or personas, exactly as they would be invoked." --output-format json --dangerously-skip-permissions 2>&1)"
+  if echo "$agent_probe" | grep -qF "$probe_agent_name"; then
+    result "agents-visible" "PASS" "Translated agent '$probe_agent_name' (from ~/.gemini/config/agents/) is visible to agy -- no second path needed."
+  else
+    result "agents-visible" "FAIL" "Translated agent '$probe_agent_name' was not found in agy's own agent listing. ~/.gemini/config/agents/ may not be what the CLI reads -- check whether it also needs writing to ~/.gemini/antigravity-cli/agents/ (sync.sh's ANTIGRAVITY_AGENTS_DIR can redirect there without a code change once confirmed). Raw output: $agent_probe"
+  fi
+else
+  result "agents-visible" "INFO" "No translated agent files found at $probe_agent_dir to probe with -- run bootstrap/sync.sh first."
+fi
 exit $failed
