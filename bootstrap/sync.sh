@@ -302,6 +302,21 @@ ANTIGRAVITY_HOOK_EVENTS='["PreToolUse","PostToolUse","Stop"]'
 # single-quoted jq program (no bash interpolation of the def body) so
 # jq's own $-variable syntax never has to survive bash double-quote
 # escaping.
+#
+# The rewritten command adds two more quoted arguments (wrapper path,
+# plugin dir) ahead of the script path — confirmed safe by inspecting the
+# real Antigravity CLI binary directly (`strings` on the installed `agy`,
+# v1.1.22): it tokenizes hook commands via
+# github.com/carapace-sh/carapace-shlex's shlex.Split, a proper
+# POSIX-quote-aware lexer (not a naive whitespace split, and no /bin/sh
+# invocation was found either) — the same quoting semantics the
+# already-working single-argument shape relied on, just with more
+# arguments. `agy plugin validate` also accepts hookify's rewritten
+# hooks.json outright. What's not verified from this repo's own tooling
+# is the one thing no static inspection can prove: that Antigravity's
+# hook *engine* actually invokes this command when a real tool-call event
+# fires — bootstrap/verify-antigravity-live.sh/.ps1 exist to check that
+# specifically, once run with a real authenticated `agy` session.
 
 translate_hooks_to_codex_json() {
   local hooks_json_path="$1" plugin_dir="$2"

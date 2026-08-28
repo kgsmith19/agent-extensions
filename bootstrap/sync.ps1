@@ -322,6 +322,21 @@ $script:HookEnvWrapper = Join-Path $PSScriptRoot "hook_env_wrapper.py"
 # rewrites the one confirmed-real shape (`python3 "<script>"`, nothing else
 # appended) produced by substituting ${CLAUDE_PLUGIN_ROOT} into a plugin's
 # own hooks.json — anything else is left untouched rather than guessed at.
+#
+# The rewritten command adds two more quoted arguments (wrapper path,
+# plugin dir) ahead of the script path — confirmed safe by inspecting the
+# real Antigravity CLI binary directly (`strings` on the installed `agy`,
+# v1.1.22): it tokenizes hook commands via
+# github.com/carapace-sh/carapace-shlex's shlex.Split, a proper
+# POSIX-quote-aware lexer (not a naive whitespace split, and no /bin/sh
+# invocation was found either) — the same quoting semantics the
+# already-working single-argument shape relied on, just with more
+# arguments. `agy plugin validate` also accepts hookify's rewritten
+# hooks.json outright. What's not verified from this repo's own tooling
+# is the one thing no static inspection can prove: that Antigravity's
+# hook *engine* actually invokes this command when a real tool-call event
+# fires — bootstrap/verify-antigravity-live.sh/.ps1 exist to check that
+# specifically, once run with a real authenticated `agy` session.
 function ConvertTo-WrappedHookCommand {
     param([string]$Command, [string]$PluginDir)
     if ($Command -match '^python3?\s+"([^"]+)"$') {

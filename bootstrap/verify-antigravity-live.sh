@@ -95,11 +95,39 @@ fi
 echo ""
 echo "--- Tier 2: live behavioral check (needs an authenticated agy session) ---"
 
+# If GEMINI_API_KEY is set but modelProvider isn't configured, agy defaults
+# to a full interactive OAuth browser flow and hangs/times out in a headless
+# shell -- discovered empirically, not documented anywhere obvious. Setting
+# this is harmless when a real account session already exists (agy prefers
+# an existing login over the API key in that case, per its own docs).
+settings_path="$HOME/.gemini/antigravity-cli/settings.json"
+if [ -n "${GEMINI_API_KEY:-}" ] && [ ! -f "$settings_path" ]; then
+  mkdir -p "$(dirname "$settings_path")"
+  echo '{"modelProvider": "gemini"}' > "$settings_path"
+fi
+
 auth_probe="$(agy -p "reply with exactly: PONG" --output-format json 2>&1)"
 auth_exit=$?
-if [ $auth_exit -ne 0 ] || echo "$auth_probe" | grep -qi "authentication required"; then
+if echo "$auth_probe" | grep -qi "authentication required"; then
   result "cli-authenticated" "INFO" "agy is not authenticated in this shell -- Tier 2 (real hook-firing check) skipped. Run 'agy' interactively once, or set GEMINI_API_KEY (antigravity.google/docs/cli/install), then re-run this script for the rest."
   exit $failed
+elif [ $auth_exit -ne 0 ]; then
+  # --output-format json doesn't surface HTTP-level detail on stdout/stderr
+  # -- it only lands in agy's own log file, one per invocation. Check the
+  # newest one for the specific signature rather than guessing from the
+  # generic "Agent execution terminated" wrapper alone.
+  log_dir="$HOME/.gemini/antigravity-cli/log"
+  log_detail=""
+  if [ -d "$log_dir" ]; then
+    latest_log="$(ls -t "$log_dir"/*.log 2>/dev/null | head -1)"
+    [ -n "$latest_log" ] && log_detail="$(grep -iE "ACCESS_TOKEN_TYPE_UNSUPPORTED|401|UNAUTHENTICATED" "$latest_log" 2>/dev/null | tail -3)"
+  fi
+  if [ -n "$log_detail" ]; then
+    result "cli-authenticated" "FAIL" "agy reached the real Gemini API and the credential was rejected. If using GEMINI_API_KEY, confirm it's a genuine AI Studio key (https://aistudio.google.com/apikey, starts with AIzaSy) and not an OAuth/session token copied from somewhere else -- those aren't accepted here. Log detail: $log_detail"
+  else
+    result "cli-authenticated" "FAIL" "agy -p failed for an unrecognized reason. stdout/stderr: $auth_probe -- check $log_dir for the newest log file's detail rather than trusting this script's pattern-matching."
+  fi
+  exit 1
 fi
 result "cli-authenticated" "PASS" "headless probe responded"
 

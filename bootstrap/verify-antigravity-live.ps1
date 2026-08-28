@@ -93,11 +93,42 @@ if (Test-Path $pluginsDir) {
 Write-Output ""
 Write-Output "--- Tier 2: live behavioral check (needs an authenticated agy session) ---"
 
+# If GEMINI_API_KEY is set but modelProvider isn't configured, agy defaults
+# to a full interactive OAuth browser flow and hangs/times out in a
+# headless shell -- discovered empirically, not documented anywhere
+# obvious. Setting this is harmless when a real account session already
+# exists (agy prefers an existing login over the API key in that case,
+# per its own docs).
+$settingsPath = Join-Path $HOME ".gemini/antigravity-cli/settings.json"
+if ($env:GEMINI_API_KEY -and -not (Test-Path $settingsPath)) {
+    New-Item -ItemType Directory -Path (Split-Path -Parent $settingsPath) -Force | Out-Null
+    '{"modelProvider": "gemini"}' | Set-Content -Path $settingsPath
+}
+
 $authProbe = & agy -p "reply with exactly: PONG" --output-format json 2>&1 | Out-String
-if ($LASTEXITCODE -ne 0 -or $authProbe -match "authentication required") {
+if ($authProbe -match "authentication required") {
     Write-Result "cli-authenticated" "INFO" "agy is not authenticated in this shell -- Tier 2 (real hook-firing check) skipped. Run 'agy' interactively once, or set GEMINI_API_KEY (antigravity.google/docs/cli/install), then re-run this script for the rest."
     $failCount = @($results.Values | Where-Object { $_.status -eq "FAIL" }).Count
     if ($failCount -gt 0) { exit 1 } else { exit 0 }
+} elseif ($LASTEXITCODE -ne 0) {
+    # --output-format json doesn't surface HTTP-level detail on stdout/stderr
+    # -- it only lands in agy's own log file, one per invocation. Check the
+    # newest one for the specific signature rather than guessing from the
+    # generic "Agent execution terminated" wrapper alone.
+    $logDir = Join-Path $HOME ".gemini/antigravity-cli/log"
+    $logDetail = ""
+    if (Test-Path $logDir) {
+        $latestLog = Get-ChildItem $logDir -Filter "*.log" -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if ($latestLog) {
+            $logDetail = (Select-String -Path $latestLog.FullName -Pattern "ACCESS_TOKEN_TYPE_UNSUPPORTED|401|UNAUTHENTICATED" -ErrorAction SilentlyContinue | Select-Object -Last 3 | ForEach-Object { $_.Line }) -join "; "
+        }
+    }
+    if ($logDetail) {
+        Write-Result "cli-authenticated" "FAIL" "agy reached the real Gemini API and the credential was rejected. If using GEMINI_API_KEY, confirm it's a genuine AI Studio key (https://aistudio.google.com/apikey, starts with AIzaSy) and not an OAuth/session token copied from somewhere else -- those aren't accepted here. Log detail: $logDetail"
+    } else {
+        Write-Result "cli-authenticated" "FAIL" "agy -p failed for an unrecognized reason. stdout/stderr: $authProbe -- check $logDir for the newest log file's detail rather than trusting this script's pattern-matching."
+    }
+    exit 1
 }
 Write-Result "cli-authenticated" "PASS" "headless probe responded"
 
