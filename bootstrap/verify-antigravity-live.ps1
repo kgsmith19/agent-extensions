@@ -36,7 +36,11 @@
 #   5. Reports whether it was actually blocked (the hook fired for real)
 #      or ran through (it didn't) -- the one open question this whole
 #      completion effort has been chasing.
-#   6. Cleans up the temporary rule regardless of outcome.
+#   6. Cleans up the temporary rule.
+#   7. Asks agy to list its available custom agents and checks whether a
+#      real translated agent name shows up, resolving the other open
+#      question: whether ~/.gemini/config/agents/ (this repo's
+#      implemented target) is actually what the CLI reads.
 
 $ErrorActionPreference = "Stop"
 $results = [ordered]@{}
@@ -106,6 +110,27 @@ try {
     }
 } finally {
     Remove-Item -Path $rulePath -ErrorAction SilentlyContinue
+}
+
+# --- Step 6: are translated agents actually visible to agy? ---
+# Resolves the other open question from this effort: whether translated
+# agents at ~/.gemini/config/agents/ (this repo's implemented target) are
+# what Antigravity's CLI actually reads, or whether it needs a second
+# copy under ~/.gemini/antigravity-cli/agents/ instead (a real directory
+# on Kyle's machine, seen holding Antigravity's own built-in content, but
+# never confirmed as an agent-loading path this repo also needs to write).
+$probeAgentDir = Join-Path $HOME ".gemini/config/agents"
+$probeAgentFile = Get-ChildItem $probeAgentDir -Filter "*.md" -File -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($probeAgentFile) {
+    $probeAgentName = [System.IO.Path]::GetFileNameWithoutExtension($probeAgentFile.Name)
+    $agentProbe = & agy -p "List the names of your available custom agents or personas, exactly as they would be invoked." --output-format json 2>&1 | Out-String
+    if ($agentProbe -match [regex]::Escape($probeAgentName)) {
+        Write-Result "agents-visible" "PASS" "Translated agent '$probeAgentName' (from ~/.gemini/config/agents/) is visible to agy -- no second path needed."
+    } else {
+        Write-Result "agents-visible" "FAIL" "Translated agent '$probeAgentName' was not found in agy's own agent listing. ~/.gemini/config/agents/ may not be what the CLI reads -- check whether it also needs writing to ~/.gemini/antigravity-cli/agents/ (sync.ps1 -AntigravityAgentsDir can redirect there without a code change once confirmed). Raw output: $agentProbe"
+    }
+} else {
+    Write-Result "agents-visible" "INFO" "No translated agent files found at $probeAgentDir to probe with -- run bootstrap/sync.ps1 first."
 }
 
 Write-Output ""

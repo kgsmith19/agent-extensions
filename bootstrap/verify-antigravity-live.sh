@@ -23,10 +23,13 @@
 # every other report along the way.
 #
 # What it does: see bootstrap/verify-antigravity-live.ps1's header for the
-# full six-step walkthrough (agy present/authenticated, plain tool
-# execution not blocked, write a temporary hookify rule, ask agy to run
-# the exact command it should block as a REAL tool call rather than a
-# hand-invoked script, report whether it was actually blocked, clean up).
+# full walkthrough (agy present/authenticated, plain tool execution not
+# blocked, write a temporary hookify rule, ask agy to run the exact
+# command it should block as a REAL tool call rather than a hand-invoked
+# script, report whether it was actually blocked, clean up, then check
+# whether a real translated agent name shows up in agy's own agent
+# listing to resolve the ~/.gemini/config/agents/ vs
+# ~/.gemini/antigravity-cli/agents/ question).
 set -uo pipefail
 
 failed=0
@@ -90,6 +93,27 @@ elif echo "$block_probe" | grep -qiE "denied|blocked|prevent"; then
   result "hook-fires-for-real" "PASS" "The command was blocked -- hookify's PreToolUse hook fired for real through Antigravity's hook engine. This closes the one remaining open question in the whole agent-extensions completion effort."
 else
   result "hook-fires-for-real" "INFO" "Inconclusive -- neither a clear block nor a clear pass-through was detected in the output. Read it directly rather than trusting this script's pattern-matching: $block_probe"
+fi
+
+# --- Step 7: are translated agents actually visible to agy? ---
+# Resolves the other open question from this effort: whether translated
+# agents at ~/.gemini/config/agents/ (this repo's implemented target) are
+# what Antigravity's CLI actually reads, or whether it needs a second copy
+# under ~/.gemini/antigravity-cli/agents/ instead (a real directory on
+# Kyle's machine, seen holding Antigravity's own built-in content, but
+# never confirmed as an agent-loading path this repo also needs to write).
+probe_agent_dir="$HOME/.gemini/config/agents"
+probe_agent_file="$(find "$probe_agent_dir" -maxdepth 1 -name '*.md' -type f 2>/dev/null | head -1)"
+if [ -n "$probe_agent_file" ]; then
+  probe_agent_name="$(basename "$probe_agent_file" .md)"
+  agent_probe="$(agy -p "List the names of your available custom agents or personas, exactly as they would be invoked." --output-format json 2>&1)"
+  if echo "$agent_probe" | grep -qF "$probe_agent_name"; then
+    result "agents-visible" "PASS" "Translated agent '$probe_agent_name' (from ~/.gemini/config/agents/) is visible to agy -- no second path needed."
+  else
+    result "agents-visible" "FAIL" "Translated agent '$probe_agent_name' was not found in agy's own agent listing. ~/.gemini/config/agents/ may not be what the CLI reads -- check whether it also needs writing to ~/.gemini/antigravity-cli/agents/ (sync.sh's ANTIGRAVITY_AGENTS_DIR can redirect there without a code change once confirmed). Raw output: $agent_probe"
+  fi
+else
+  result "agents-visible" "INFO" "No translated agent files found at $probe_agent_dir to probe with -- run bootstrap/sync.sh first."
 fi
 
 exit $failed
