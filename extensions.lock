@@ -1,0 +1,113 @@
+{
+  "entries": [
+    {
+      "identity": "capability.canvas-design",
+      "rendered_digest": "sha256:f839ce1fe7c27352b5ad9cb74ddec8350142afd17ad8757f697e039e0d35f8a8",
+      "source_commit": "0a64e398ec6bb34a494f0c347e8ccae53a862f8e",
+      "source_url": "https://github.com/anthropics/skills",
+      "spdx_license": "Apache-2.0",
+      "upstream_kind": "pinned"
+    },
+    {
+      "identity": "capability.web-artifacts-builder",
+      "rendered_digest": "sha256:9bcd2e5c0c401f25fcf5223a3b690832151e9064bdbaf652d92fc5c70267f2a2",
+      "source_commit": "0a64e398ec6bb34a494f0c347e8ccae53a862f8e",
+      "source_url": "https://github.com/anthropics/skills",
+      "spdx_license": "Apache-2.0",
+      "upstream_kind": "pinned"
+    },
+    {
+      "identity": "capability.skill-creator",
+      "rendered_digest": "sha256:c89a25bfd97d15bf5db102fdff98cf5db6a845e86a11ac1e4ceb6c57e0c4e586",
+      "source_commit": "0a64e398ec6bb34a494f0c347e8ccae53a862f8e",
+      "source_url": "https://github.com/anthropics/skills",
+      "spdx_license": "Apache-2.0",
+      "upstream_kind": "pinned"
+    },
+    {
+      "identity": "marketplace.claude-plugins-official",
+      "rendered_digest": "sha256:b6b454097f10f7de2f0397ca1fd9c0a45feb4928b606cc31b0db87220f77e18a",
+      "source_commit": "cbe94d02bc8ea7375e13b39cc400e17eeabfcbee",
+      "source_url": "https://github.com/anthropics/claude-plugins-official",
+      "spdx_license": "Apache-2.0",
+      "upstream_kind": "pinned"
+    },
+    {
+      "identity": "marketplace.superpowers-marketplace",
+      "rendered_digest": "sha256:a8873103850d623faa90fc11861a19d1296ffd26b9f083f01f3e9707707af91a",
+      "source_commit": "1ab7b8eeef707f21565471f11d3782fac3dd1c61",
+      "source_url": "https://github.com/obra/superpowers-marketplace",
+      "spdx_license": "Apache-2.0",
+      "upstream_kind": "pinned"
+    },
+    {
+      "identity": "plugin.superpowers-marketplace.claude-session-driver",
+      "rendered_digest": "sha256:946b249319333d9b69124465a3679ad3bc98b64bcaedeaadd4b254de1f998341",
+      "source_commit": "d97d1eb0a904546ed059b0a33dd5d4aa3e199c9a",
+      "source_url": "https://github.com/obra/superpowers-marketplace",
+      "spdx_license": "Apache-2.0",
+      "upstream_kind": "pinned"
+    },
+    {
+      "identity": "plugin.superpowers-marketplace.double-shot-latte",
+      "rendered_digest": "sha256:c9e02150d5fc7a5fc410ab58a479f9a5518320b58f2574fcce5e474adb8be63e",
+      "source_commit": "dfe756798327554783e77758d9d50d44b4308bbf",
+      "source_url": "https://github.com/obra/superpowers-marketplace",
+      "spdx_license": "Apache-2.0",
+      "upstream_kind": "pinned"
+    },
+    {
+      "identity": "plugin.superpowers-marketplace.elements-of-style",
+      "rendered_digest": "sha256:a57564505f795a0271df87b2bb9a304447d32cd211c8cffda3b21ac22c681c8f",
+      "source_commit": "05fc4f0d2b97b7c042dd9949ad658568e4a1324e",
+      "source_url": "https://github.com/obra/superpowers-marketplace",
+      "spdx_license": "Apache-2.0",
+      "upstream_kind": "pinned"
+    },
+    {
+      "identity": "plugin.superpowers-marketplace.episodic-memory",
+      "rendered_digest": "sha256:eaefc578ed230bd504c93624bf60318320ce25df757511c68df89e1603bcae22",
+      "source_commit": "10757690210574421f1df5f35835af8d0c74d984",
+      "source_url": "https://github.com/obra/superpowers-marketplace",
+      "spdx_license": "Apache-2.0",
+      "upstream_kind": "pinned"
+    },
+    {
+      "identity": "plugin.superpowers-marketplace.private-journal-mcp",
+      "rendered_digest": "sha256:5a1efb28a4c8476bd9168b8b535d2aabbfffec973e305803627fb7cabe83735b",
+      "source_commit": "016953f24a73dabb8a68569aecf4ebd89c74d70b",
+      "source_url": "https://github.com/obra/superpowers-marketplace",
+      "spdx_license": "Apache-2.0",
+      "upstream_kind": "pinned"
+    },
+    {
+      "identity": "plugin.superpowers-marketplace.superpowers-chrome",
+      "rendered_digest": "sha256:0988600674cf1359eaff09cc66c2d50332f83cdab0f61c4a2bf8c40892a23a74",
+      "source_commit": "782358eb8d3b99e3cc1321354b9233f660fdac7a",
+      "source_url": "https://github.com/obra/superpowers-marketplace",
+      "spdx_license": "Apache-2.0",
+      "upstream_kind": "pinned"
+    },
+    {
+      "identity": "plugin.superpowers-marketplace.superpowers-lab",
+      "rendered_digest": "sha256:fc64e4c068377a1960cd9b35a168f531aed7794a57b0365b49a6878942adbc4d",
+      "source_commit": "51111f74f24058117752d9aa917cb19859f8ec86",
+      "source_url": "https://github.com/obra/superpowers-marketplace",
+      "spdx_license": "Apache-2.0",
+      "upstream_kind": "pinned"
+    },
+    {
+      "identity": "marketplace.agent-extensions-live",
+      "rendered_digest": "sha256:a93441a4e1b2acc6d9e7100c22c7aec8db76907fe90e5089243b15e5993eec82",
+      "source_commit": "0000000000000000000000000000000000000000",
+      "source_url": "claude-code-marketplace:agent-extensions",
+      "spdx_license": "Apache-2.0",
+      "upstream_kind": "live-marketplace"
+    }
+  ],
+  "history": [
+    "initial lock: Stage 17, pins preserved verbatim from VENDORED-FROM + external-marketplaces.json"
+  ],
+  "updated_at": "2026-09-18T20:29:53.724361Z",
+  "version": "1.0.0"
+}
