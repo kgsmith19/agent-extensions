@@ -2,7 +2,7 @@ import pytest
 from agent_extensions.schemas.catalog_schema import Catalog, CatalogEntry, validate_catalog
 
 def test_catalog_rejects_duplicate_capability_id():
-    """Protects uniqueness; catches two entries with same semantic ID."""
+    """Protects uniqueness; catches two entries with same semantic ID and version."""
     entries = [
         CatalogEntry(
             semantic_id="capability.search",
@@ -13,15 +13,15 @@ def test_catalog_rejects_duplicate_capability_id():
             license="MIT",
         ),
         CatalogEntry(
-            semantic_id="capability.search",  # Duplicate ID
-            name="Web Search v2",
+            semantic_id="capability.search",  # Duplicate ID, same version
+            name="Web Search v1 (copy)",
             provider="openai",
-            version="2.0.0",
+            version="1.0.0",
             source_pin="sha256:def456...",
             license="Apache-2.0",
         ),
     ]
-    
+
     with pytest.raises(ValueError, match="duplicate.*semantic_id"):
         Catalog(entries=entries)
 

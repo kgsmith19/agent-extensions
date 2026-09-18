@@ -35,6 +35,12 @@ class Catalog(BaseModel):
     @field_validator("entries")
     @classmethod
     def validate_no_duplicate_ids(cls, entries):
+        conflicts = find_conflicting_versions(entries)
+        if conflicts:
+            detail = "; ".join(
+                f"{c.semantic_id} at versions {sorted(c.versions)}" for c in conflicts
+            )
+            raise ValueError(f"conflicting versions for semantic_id entries: {detail}")
         ids = [e.semantic_id for e in entries]
         if len(ids) != len(set(ids)):
             duplicates = [id for id in ids if ids.count(id) > 1]
@@ -47,6 +53,27 @@ class Catalog(BaseModel):
             if entry.semantic_id == semantic_id:
                 return entry
         return None
+
+
+class VersionConflict(BaseModel):
+    """One semantic ID declared at more than one version."""
+
+    semantic_id: str = Field(..., description="Conflicted semantic capability ID")
+    versions: List[str] = Field(..., description="Distinct versions seen for the ID")
+
+
+def find_conflicting_versions(entries: List[CatalogEntry]) -> List[VersionConflict]:
+    """Group entries by semantic ID and report IDs seen at >1 version."""
+    seen: Dict[str, List[str]] = {}
+    for entry in entries:
+        seen.setdefault(entry.semantic_id, [])
+        if entry.version not in seen[entry.semantic_id]:
+            seen[entry.semantic_id].append(entry.version)
+    return [
+        VersionConflict(semantic_id=semantic_id, versions=versions)
+        for semantic_id, versions in seen.items()
+        if len(versions) > 1
+    ]
 
 
 def validate_catalog(data: Dict) -> Catalog:
