@@ -1,7 +1,7 @@
 """License metadata and provenance tracking schema."""
 
-from typing import Optional, Set
-from pydantic import BaseModel, Field, validator
+from typing import Optional
+from pydantic import BaseModel, Field, field_validator
 
 
 # Common SPDX license identifiers (simplified list)
@@ -42,7 +42,8 @@ class ProvenanceRecord(BaseModel):
     source_commit: str = Field(..., description="Exact commit SHA")
     build_timestamp: Optional[str] = Field(None, description="Build/publish timestamp")
 
-    @validator("source_commit")
+    @field_validator("source_commit")
+    @classmethod
     def validate_commit_sha(cls, v):
         """Ensure commit SHA is valid format."""
         if not v or len(v) < 8:
@@ -63,14 +64,16 @@ class LicenseMetadata(BaseModel):
     )
     additional_licenses: Optional[str] = Field(None, description="Additional license info or path")
 
-    @validator("spdx_license")
+    @field_validator("spdx_license")
+    @classmethod
     def validate_spdx(cls, v):
         """Ensure SPDX license is valid."""
         if not validate_spdx_license(v):
             raise ValueError(f"{v} is not a valid SPDX license identifier")
         return v
 
-    @validator("semantic_id")
+    @field_validator("semantic_id")
+    @classmethod
     def validate_semantic_id(cls, v):
         """Ensure semantic ID has required format."""
         if not v.startswith("capability."):
