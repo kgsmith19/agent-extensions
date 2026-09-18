@@ -43,3 +43,72 @@ Source: `CONTRACT_VERSION`, `compatibility` field; validation in `validate_contr
 - **Offline Bootstrap:** contract + registry + schemas suffice with no live network.
 - **Failure Behavior:** fail closed on skew (unknown version, hash mismatch, absent coverage) with repair guidance; no silent fallback.
 - **Sibling Repo:** canonical sibling is `kgsmith19/agent-extensions`; no substitution.
+
+## Agent-Extensions Implementation
+
+### Schemas Implemented
+
+1. **CatalogEntry / Catalog** (`agent_extensions/schemas/catalog_schema.py`)
+   - Validates semantic ID format (`capability.*`)
+   - Enforces duplicate ID detection
+   - Provides catalog lookup by semantic ID
+
+2. **ProfileEntry / Profile** (`agent_extensions/schemas/profile_schema.py`)
+   - Lifecycle state machine: AVAILABLE → STAGED → ENABLED → RESIDENT → INVOKED → {VERIFIED, DEGRADED}
+   - Validates valid state transitions
+   - Counts extensions by lifecycle state
+
+3. **LicenseMetadata / ProvenanceRecord** (`agent_extensions/schemas/license_metadata.py`)
+   - SPDX license validation
+   - Source URL and commit SHA tracking
+   - Preserves existing extension pins during migration
+
+4. **ContractBinding / ContractValidator** (`agent_extensions/schemas/contract_v1_0_0.py`)
+   - Records exact Standard merged SHA
+   - Tracks schema versions
+   - Validates version/SHA compatibility
+
+### Sync Implementation
+
+- **read_back.py**: Reconstruct catalog/profile from filesystem JSON, offline bootstrap
+- **render.py**: Render profile to provider-specific manifests, validate profile against catalog
+
+### Compatibility Matrix
+
+| Standard Schema | Agent-Extensions Schema | Version | Status |
+|---|---|---|---|
+| Semantic Capability ID | `semantic_id` (string, `capability.*` format) | 1.0.0 | ✓ Matching |
+| Provider Manifest | Provider Binding (string, mapped from semantic ID) | 1.0.0 | ✓ Compatible |
+| Enforcement Class | Lifecycle State (enum, AVAILABLE→...→VERIFIED/DEGRADED) | 1.0.0 | ✓ Compatible |
+| Context/Tool Budget | Profile Entry count (countable by state) | 1.0.0 | ✓ Compatible |
+| License Metadata | SPDX ID + Provenance (source URL, commit SHA) | 1.0.0 | ✓ Compatible |
+
+## Binding Proof
+
+- Schemas defined: ✓
+- Tests passing: ✓ (29 passed, see Verification Results)
+- Offline bootstrap verified: ✓ (`test_offline_bootstrap`)
+- Migration preserves pins: ✓ (`test_license_metadata_preserves_existing_pins`)
+- Provider bindings implemented: ✓ (`test_apply_provider_binding_*`)
+
+**Status: READY FOR MERGE**
+
+## Verification Results
+
+**Test Run:** 2026-09-18 (branch `stage-15b-sibling-contract-agent-extensions`)
+
+### Test Summary
+
+```text
+29 passed in 0.20s
+```
+
+### Coverage
+
+- Catalog schema: 4 tests ✓
+- Profile schema: 7 tests ✓
+- License metadata: 3 tests ✓
+- Contract binding: 7 tests ✓
+- Sync (read-back/render): 8 tests ✓
+
+**Total: 29 tests, all PASS**
