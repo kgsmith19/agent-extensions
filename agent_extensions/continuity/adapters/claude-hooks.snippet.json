@@ -1,0 +1,24 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"C:/code/agent-extensions/agent_extensions/continuity/adapters/claude_hook.py\""
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"C:/code/agent-extensions/agent_extensions/continuity/adapters/claude_hook.py\""
+          }
+        ]
+      }
+    ]
+  }
+}
