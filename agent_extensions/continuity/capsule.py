@@ -98,6 +98,31 @@ def capsule_path(cwd: Path, directory: Optional[Path] = None) -> Path:
     return (directory or DEFAULT_CAPSULE_DIR) / f"{project_key(cwd)}.json"
 
 
+#: Gitignored, repo-local, uncommitted process overlay. Distinct from
+#: ``AGENTS.override.md`` / ``CLAUDE.local.md``, which *shadow* a committed
+#: AGENTS.md; this one is additive and is only ever injected by the adapters.
+LOCAL_OVERLAY_NAME = "AGENTS.local.md"
+LOCAL_OVERLAY_MAX_BYTES = 32768
+
+
+def read_local_overlay(cwd: Path) -> str:
+    """Return the gitignored per-repo overlay, or "" when absent/empty/oversized.
+
+    Additive by design: it adds local process on top of whatever AGENTS.md the
+    repository already commits, including a team's own AGENTS.md.
+    """
+    path = Path(cwd) / LOCAL_OVERLAY_NAME
+    if not path.is_file():
+        return ""
+    try:
+        data = path.read_bytes()[: LOCAL_OVERLAY_MAX_BYTES + 1]
+    except OSError:
+        return ""
+    if len(data) > LOCAL_OVERLAY_MAX_BYTES:
+        data = data[:LOCAL_OVERLAY_MAX_BYTES]
+    return data.decode("utf-8", errors="replace").strip()
+
+
 @dataclass
 class Capsule:
     """One continuity record. Auto fields are refreshed; manual fields persist."""
@@ -140,33 +165,47 @@ class Capsule:
             (self.task, self.next_action, self.phase, self.branch, self.blockers)
         )
 
-    def render(self, fmt: str = "plain") -> str:
-        """Render for injection. Unknown/empty capsules render to an empty string."""
-        if self.is_empty():
-            return ""
-        loc = f"{self.branch or '?'} @ {(self.head or '')[:10]}"
-        if self.dirty:
-            loc += f" (+{self.dirty} dirty)"
-        lines = [f"## Continuity capsule - {self.project or self.cwd}"]
-        meta = [f"phase: {self.phase}" if self.phase else "", f"git: {loc}" if self.branch or self.head else ""]
-        lines.append(" | ".join(m for m in meta if m))
-        if self.task:
-            lines.append(f"- task: {self.task}")
-        if self.next_action:
-            lines.append(f"- next action: {self.next_action}")
-        if self.blockers:
-            lines.append(f"- blockers: {'; '.join(self.blockers)}")
-        if self.decisions:
-            lines.append(f"- decisions: {'; '.join(self.decisions)}")
-        if self.evidence:
-            lines.append(f"- evidence: {'; '.join(self.evidence)}")
-        if self.open_issues:
-            lines.append(f"- open issues: {', '.join('#' + str(i) for i in self.open_issues)}")
-        if self.updated_at:
-            by = "/".join(p for p in (self.harness, self.model) if p)
-            lines.append(f"- updated: {self.updated_at}" + (f" ({by})" if by else ""))
-        text = "\n".join(lines)
+    def render(self, fmt: str = "plain", prefix: str = "") -> str:
+        """Render for injection: an optional local-overlay prefix, then this capsule.
 
+        Either part may be absent; the result is empty when both are. ``prefix``
+        carries the gitignored per-repo overlay (see ``read_local_overlay``), so
+        an uncommitted local process rides in the same session-start injection
+        as the capsule.
+        """
+        body = ""
+        if not self.is_empty():
+            loc = f"{self.branch or '?'} @ {(self.head or '')[:10]}"
+            if self.dirty:
+                loc += f" (+{self.dirty} dirty)"
+            lines = [f"## Continuity capsule - {self.project or self.cwd}"]
+            meta = [
+                f"phase: {self.phase}" if self.phase else "",
+                f"git: {loc}" if self.branch or self.head else "",
+            ]
+            lines.append(" | ".join(m for m in meta if m))
+            if self.task:
+                lines.append(f"- task: {self.task}")
+            if self.next_action:
+                lines.append(f"- next action: {self.next_action}")
+            if self.blockers:
+                lines.append(f"- blockers: {'; '.join(self.blockers)}")
+            if self.decisions:
+                lines.append(f"- decisions: {'; '.join(self.decisions)}")
+            if self.evidence:
+                lines.append(f"- evidence: {'; '.join(self.evidence)}")
+            if self.open_issues:
+                lines.append(
+                    f"- open issues: {', '.join('#' + str(i) for i in self.open_issues)}"
+                )
+            if self.updated_at:
+                by = "/".join(p for p in (self.harness, self.model) if p)
+                lines.append(f"- updated: {self.updated_at}" + (f" ({by})" if by else ""))
+            body = "\n".join(lines)
+
+        text = "\n\n".join(p.strip() for p in (prefix, body) if p and p.strip())
+        if not text:
+            return ""
         if fmt == "claude":
             payload = {
                 "hookSpecificOutput": {
