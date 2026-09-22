@@ -146,11 +146,11 @@ def port_plugin(plugin_dir: Path, provider: str, report: GapReport) -> Dict[str,
     counts = {"agents": 0, "hooks": 0, "commands": 0, "mcp": 0}
     plugin = plugin_dir.name
     for agent_md in sorted(plugin_dir.rglob("agents/*.md")):
-        port_agent_md(agent_md.read_text(), provider, report, plugin, agent_md.stem)
+        port_agent_md(agent_md.read_text(encoding="utf-8", errors="replace"), provider, report, plugin, agent_md.stem)
         counts["agents"] += 1
     for hooks_json in sorted(plugin_dir.rglob("hooks.json")):
         try:
-            data = json.loads(hooks_json.read_text())
+            data = json.loads(hooks_json.read_text(encoding="utf-8", errors="replace"))
         except json.JSONDecodeError:
             report.add(plugin, provider, "hook", str(hooks_json),
                        "hooks.json is not valid JSON", "fix upstream; nothing installed")
@@ -165,7 +165,7 @@ def port_plugin(plugin_dir: Path, provider: str, report: GapReport) -> Dict[str,
                    "invoke the underlying skill directly; see command-gap-report.md")
     for mcp in sorted(plugin_dir.rglob(".mcp.json")):
         try:
-            port_mcp_config(json.loads(mcp.read_text()), provider, report, plugin)
+            port_mcp_config(json.loads(mcp.read_text(encoding="utf-8", errors="replace")), provider, report, plugin)
             counts["mcp"] += 1
         except json.JSONDecodeError:
             report.add(plugin, provider, "mcp", str(mcp),

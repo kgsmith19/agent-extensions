@@ -119,7 +119,7 @@ def canary_url_serverurl_drift(provider: str) -> CanaryResult:
 def canary_hook_env_noop(repo_root: Path, provider: str) -> CanaryResult:
     """Historical regression: hook wrapper that no-ops must be caught, not trusted."""
     wrapper = repo_root / "bootstrap" / "hook_env_wrapper.py"
-    content = wrapper.read_text() if wrapper.exists() else ""
+    content = wrapper.read_text(encoding="utf-8", errors="replace") if wrapper.exists() else ""
     bridges_root = "CLAUDE_PLUGIN_ROOT" in content
     status = Status.VERIFIED if bridges_root else Status.DEGRADED
     return CanaryResult(
@@ -305,5 +305,5 @@ def write_canary_artifacts(report: ConformanceReport, dest: Path) -> Path:
         ],
     }
     out = dest / "conformance.json"
-    out.write_text(json.dumps(payload, indent=2, sort_keys=True))
+    out.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     return out

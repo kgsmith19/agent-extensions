@@ -159,5 +159,5 @@ def write_lock_last(repo_root) -> Dict[str, str]:
     out = root / "extensions.lock"
     content = json.dumps({"entries": [e.model_dump() for e in lock.entries]},
                          indent=2, sort_keys=True)
-    out.write_text(content + "\n")
+    out.write_text(content + "\n", encoding="utf-8")
     return {"written": "yes", "entries": str(len(lock.entries))}

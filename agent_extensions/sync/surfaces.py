@@ -61,7 +61,7 @@ def declare_surfaces() -> List[SurfaceDeclaration]:
 
 def read_account_manifest(repo_root: Path) -> Dict:
     """Read the declarative account roster (skills + connectors, never auto-loaded)."""
-    return json.loads((repo_root / "bootstrap" / "account-manifest.json").read_text())
+    return json.loads((repo_root / "bootstrap" / "account-manifest.json").read_text(encoding="utf-8", errors="replace"))
 
 
 def read_last_applied(repo_root: Path) -> Dict:
@@ -69,7 +69,7 @@ def read_last_applied(repo_root: Path) -> Dict:
     path = repo_root / "bootstrap" / "account-manifest.last-applied.json"
     if not path.exists():
         return {"skills": [], "connectors": []}
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8", errors="replace"))
 
 
 def diff_manual_state(current: Dict, last_applied: Dict) -> Dict[str, List[str]]:
@@ -111,13 +111,13 @@ def generate_manual_bundle(
         src = repo_root / skill["source"] / "SKILL.md"
         if not src.exists():
             raise FileNotFoundError(f"account skill missing: {skill['source']}")
-        text = src.read_text()
+        text = src.read_text(encoding="utf-8", errors="replace")
         hits = scan_secrets(text)
         if hits:
             raise RuntimeError(f"secret scan failed for {skill['name']}: {hits}")
         staged = dest / skill["name"] / "SKILL.md"
         staged.parent.mkdir(parents=True, exist_ok=True)
-        staged.write_text(text)  # real copy, not a symlink
+        staged.write_text(text, encoding="utf-8")  # real copy, not a symlink
         bundle.staged_files.append(str(staged.relative_to(dest).as_posix()))
         bundle.checklist.append(
             f"upload {skill['name']}/SKILL.md to {surface} account skill settings"
@@ -129,7 +129,8 @@ def generate_manual_bundle(
     (dest / "CHECKLIST.md").write_text(
         "# Manual upload checklist\n\n"
         + "".join(f"- [ ] {item}\n" for item in bundle.checklist)
-        + f"\nBundle digest: `{bundle.digest}`\n"
+        + f"\nBundle digest: `{bundle.digest}`\n",
+        encoding="utf-8",
     )
     return bundle
 
@@ -138,5 +139,5 @@ def record_last_applied(repo_root: Path, bundle: ManualBundle) -> Path:
     """After the person confirms upload, record the new last-applied state."""
     manifest = read_account_manifest(repo_root)
     path = repo_root / "bootstrap" / "account-manifest.last-applied.json"
-    path.write_text(json.dumps(manifest, indent=2, sort_keys=True))
+    path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
     return path

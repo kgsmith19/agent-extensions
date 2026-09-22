@@ -165,7 +165,7 @@ def bootstrap(
             vf = skills_dir / "VENDORED-FROM"
             pins = {}
             if vf.exists():
-                for line in vf.read_text().splitlines():
+                for line in vf.read_text(encoding="utf-8", errors="replace").splitlines():
                     parts = line.split()
                     if len(parts) >= 2:
                         pins[parts[0]] = parts[1]

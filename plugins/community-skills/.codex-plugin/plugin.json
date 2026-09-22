@@ -1,0 +1,6 @@
+{
+  "name": "community-skills",
+  "version": "1.0.0",
+  "description": "Vetted third-party cross-provider skills (MIT), vendored from daymade/claude-code-skills.",
+  "skills": "./skills/"
+}
