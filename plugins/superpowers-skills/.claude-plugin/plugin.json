@@ -1,0 +1,8 @@
+{
+  "name": "superpowers-skills",
+  "description": "Cross-provider process skills vendored from obra/superpowers (MIT). Starts with proving-it-works-with-a-movie: record real running software as verification evidence.",
+  "version": "1.0.0",
+  "author": { "name": "Kyle Smith" },
+  "license": "MIT",
+  "keywords": ["verification", "evidence", "demo", "screencast"]
+}

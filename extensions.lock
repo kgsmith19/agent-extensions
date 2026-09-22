@@ -25,6 +25,14 @@
       "upstream_kind": "pinned"
     },
     {
+      "identity": "capability.proving-it-works-with-a-movie",
+      "rendered_digest": "sha256:e576d25f6ccdaa146b98faaab1038c1b7e1d1c898ad44f796c0041894441e0cb",
+      "source_commit": "1c63ca9d81353d8aeced6edd0c5778ee6154d6ae",
+      "source_url": "https://github.com/obra/superpowers",
+      "spdx_license": "MIT",
+      "upstream_kind": "pinned"
+    },
+    {
       "identity": "marketplace.claude-plugins-official",
       "rendered_digest": "sha256:b6b454097f10f7de2f0397ca1fd9c0a45feb4928b606cc31b0db87220f77e18a",
       "source_commit": "c2301c68838dc9832e4034558e2c3a05e78f269c",
@@ -109,8 +117,9 @@
     "initial lock: Stage 17, pins preserved verbatim from VENDORED-FROM + external-marketplaces.json",
     "update external-marketplace-pins cbe94d02bc8ea7375e13b39cc400e17eeabfcbee -> c2301c68838dc9832e4034558e2c3a05e78f269c (chore: bump external marketplace pins to upstream HEAD)",
     "update external-marketplace-pins 1ab7b8eeef707f21565471f11d3782fac3dd1c61 -> ff9fa8a51f422d81414fa355587620d4ad2df81c (chore: bump external marketplace pins to upstream HEAD)",
-    "update external-marketplace-pins 10757690210574421f1df5f35835af8d0c74d984 -> 7e06519357777badd7a115d2014a7ef845904310 (chore: bump external marketplace pins to upstream HEAD)"
+    "update external-marketplace-pins 10757690210574421f1df5f35835af8d0c74d984 -> 7e06519357777badd7a115d2014a7ef845904310 (chore: bump external marketplace pins to upstream HEAD)",
+    "add capability.proving-it-works-with-a-movie @ 1c63ca9d81353d8aeced6edd0c5778ee6154d6ae (https://github.com/obra/superpowers, MIT)"
   ],
-  "updated_at": "2026-09-22T17:39:58.085970Z",
+  "updated_at": "2026-09-22T18:23:16.212432Z",
   "version": "1.0.0"
 }

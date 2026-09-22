@@ -1,0 +1,6 @@
+{
+  "name": "superpowers-skills",
+  "version": "1.0.0",
+  "description": "Cross-provider process skills vendored from obra/superpowers (MIT). Starts with proving-it-works-with-a-movie: record real running software as verification evidence.",
+  "skills": "./skills/"
+}
