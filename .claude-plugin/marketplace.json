@@ -23,6 +23,13 @@
       "version": "1.0.0",
       "source": "./plugins/superpowers-skills",
       "author": { "name": "Kyle Smith" }
+    },
+    {
+      "name": "community-skills",
+      "description": "Vetted third-party cross-provider skills (MIT), vendored from daymade/claude-code-skills",
+      "version": "1.0.0",
+      "source": "./plugins/community-skills",
+      "author": { "name": "Kyle Smith" }
     }
   ]
 }

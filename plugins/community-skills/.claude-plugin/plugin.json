@@ -1,0 +1,8 @@
+{
+  "name": "community-skills",
+  "description": "Vetted third-party cross-provider skills (MIT). Starts with cli-demo-generator, deep-research, and debugging-network-issues, vendored from daymade/claude-code-skills.",
+  "version": "1.0.0",
+  "author": { "name": "Kyle Smith" },
+  "license": "MIT",
+  "keywords": ["research", "debugging", "cli-demo", "vhs"]
+}

@@ -45,7 +45,7 @@ def _skill_dependencies(skill_dir: Path) -> List[str]:
 
 def index_skill(skill_dir: Path, repo_root: Path) -> SkillDescriptor:
     """Build a descriptor from a live skill dir without loading the body."""
-    skill_md = (skill_dir / "SKILL.md").read_text()
+    skill_md = (skill_dir / "SKILL.md").read_text(encoding="utf-8", errors="replace")
     raw = skill_md.encode()
     slug = skill_dir.name
     return SkillDescriptor(
@@ -93,7 +93,7 @@ def resolve_body(
         raise FileNotFoundError(
             f"selected skill {descriptor.name} has no body at {body_path}"
         )
-    body = body_path.read_text()
+    body = body_path.read_text(encoding="utf-8", errors="replace")
     digest = "sha256:" + hashlib.sha256(body.encode()).hexdigest()
     want = expected_digest or descriptor.body_digest
     if digest != want:

@@ -53,12 +53,12 @@ def migrate_marketplace(declarations: List[dict]) -> Catalog:
 def generate_catalog_view(catalog: Catalog, dest: Union[str, Path]) -> Path:
     """Write the broad-supply catalog view as JSON; return the path."""
     path = Path(dest)
-    path.write_text(json.dumps(catalog.model_dump(mode="json"), indent=2, sort_keys=True))
+    path.write_text(json.dumps(catalog.model_dump(mode="json"), indent=2, sort_keys=True), encoding="utf-8")
     return path
 
 
 def generate_profile_view(profile: Profile, dest: Union[str, Path]) -> Path:
     """Write the tiny task-specific profile view as JSON; return the path."""
     path = Path(dest)
-    path.write_text(json.dumps(profile.model_dump(mode="json"), indent=2, sort_keys=True))
+    path.write_text(json.dumps(profile.model_dump(mode="json"), indent=2, sort_keys=True), encoding="utf-8")
     return path

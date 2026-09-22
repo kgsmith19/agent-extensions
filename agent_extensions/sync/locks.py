@@ -20,8 +20,16 @@ def _rendered_digest_for_skill(skill_dir: Path) -> str:
     license_txt = skill_dir / "LICENSE.txt"
     canonical = json.dumps(
         {
-            "skill_md": skill_md.read_text() if skill_md.exists() else "",
-            "license_txt": license_txt.read_text() if license_txt.exists() else "",
+            "skill_md": (
+                skill_md.read_text(encoding="utf-8", errors="replace")
+                if skill_md.exists()
+                else ""
+            ),
+            "license_txt": (
+                license_txt.read_text(encoding="utf-8", errors="replace")
+                if license_txt.exists()
+                else ""
+            ),
         },
         sort_keys=True,
     )
@@ -32,7 +40,7 @@ def _license_from_file(skill_dir: Path) -> str:
     """SPDX id inferred from a skill's LICENSE.txt; Apache-2.0 when absent/unknown."""
     lic = skill_dir / "LICENSE.txt"
     if lic.exists():
-        head = lic.read_text()[:2000]
+        head = lic.read_text(encoding="utf-8", errors="replace")[:2000]
         if "MIT License" in head:
             return "MIT"
         if "Apache License" in head:
@@ -58,7 +66,7 @@ def build_lock_from_repo(repo_root: Union[str, Path]) -> ExtensionsLock:
         vendored = {}
         vf = skills_dir / "VENDORED-FROM"
         if vf.exists():
-            for line in vf.read_text().splitlines():
+            for line in vf.read_text(encoding="utf-8", errors="replace").splitlines():
                 parts = line.split()
                 if len(parts) >= 2:
                     vendored[parts[0]] = {
@@ -87,7 +95,7 @@ def build_lock_from_repo(repo_root: Union[str, Path]) -> ExtensionsLock:
 
     # 2. External marketplace pins, preserved verbatim.
     mp_path = root / "bootstrap" / "external-marketplaces.json"
-    mp_data = json.loads(mp_path.read_text())
+    mp_data = json.loads(mp_path.read_text(encoding="utf-8", errors="replace"))
     for mp in mp_data.get("marketplaces", []):
         entries.append(
             ExtensionLock(

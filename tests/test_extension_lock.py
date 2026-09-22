@@ -114,6 +114,17 @@ def test_unavailable_commit_shape_rejected():
         _lock(source_commit="not-a-commit-at-all........................")
 
 
+def test_rendered_digest_reads_utf8_not_platform_default(tmp_path):
+    """Protects non-ASCII skills; the digest must read UTF-8, not cp1252."""
+    from agent_extensions.sync.locks import _rendered_digest_for_skill
+
+    skill = tmp_path / "s"
+    skill.mkdir()
+    (skill / "SKILL.md").write_text("cafe \u2014 na\u00efve \u4e2d\u6587", encoding="utf-8")
+    digest = _rendered_digest_for_skill(skill)
+    assert digest.startswith("sha256:") and len(digest) == len("sha256:") + 64
+
+
 def test_build_lock_reads_every_source_live():
     """Protects ground truth; the builder reads VENDORED-FROM + pins live, verifies clean."""
     from pathlib import Path

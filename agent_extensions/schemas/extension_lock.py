@@ -122,12 +122,12 @@ def verify_lockfile(lock: ExtensionsLock) -> List[str]:
 
 def read_lockfile(path: Union[str, Path]) -> ExtensionsLock:
     """Read and validate extensions.lock from disk."""
-    data = json.loads(Path(path).read_text())
+    data = json.loads(Path(path).read_text(encoding="utf-8", errors="replace"))
     return ExtensionsLock(**data)
 
 
 def write_lockfile(lock: ExtensionsLock, path: Union[str, Path]) -> Path:
     """Write lockfile with history appended; returns the path."""
     dest = Path(path)
-    dest.write_text(json.dumps(lock.model_dump(mode="json"), indent=2, sort_keys=True))
+    dest.write_text(json.dumps(lock.model_dump(mode="json"), indent=2, sort_keys=True), encoding="utf-8")
     return dest

@@ -26,7 +26,7 @@ def read_catalog_from_filesystem(catalog_file_path: Union[str, Path]) -> Catalog
     if not path.exists():
         raise FileNotFoundError(f"Catalog file not found: {path}")
 
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
     return Catalog(**data)
 
 
@@ -44,7 +44,7 @@ def read_profile_from_filesystem(profile_file_path: Union[str, Path]) -> Profile
     if not path.exists():
         raise FileNotFoundError(f"Profile file not found: {path}")
 
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
     return Profile(**data)
 
 

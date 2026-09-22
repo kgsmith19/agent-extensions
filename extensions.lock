@@ -2,7 +2,7 @@
   "entries": [
     {
       "identity": "capability.canvas-design",
-      "rendered_digest": "sha256:f839ce1fe7c27352b5ad9cb74ddec8350142afd17ad8757f697e039e0d35f8a8",
+      "rendered_digest": "sha256:72396873acc525076fd3114d6e494e96b3de3a750e1c48786177b3360b3e7f8e",
       "source_commit": "0a64e398ec6bb34a494f0c347e8ccae53a862f8e",
       "source_url": "https://github.com/anthropics/skills",
       "spdx_license": "Apache-2.0",
@@ -10,15 +10,39 @@
     },
     {
       "identity": "capability.web-artifacts-builder",
-      "rendered_digest": "sha256:9bcd2e5c0c401f25fcf5223a3b690832151e9064bdbaf652d92fc5c70267f2a2",
+      "rendered_digest": "sha256:aa1ab3cd237fc3eccc02e1823db22f48bac94e878342d2a2a9af6394ee4fdda3",
       "source_commit": "0a64e398ec6bb34a494f0c347e8ccae53a862f8e",
       "source_url": "https://github.com/anthropics/skills",
       "spdx_license": "Apache-2.0",
       "upstream_kind": "pinned"
     },
     {
+      "identity": "capability.cli-demo-generator",
+      "rendered_digest": "sha256:7e9d166189dbfaebcaaf98aa19a858d89427daba58ce5b0a6856fa1ab3e3449c",
+      "source_commit": "f7c20282c514f7fbaffe8b7d1c5ed42105c7816e",
+      "source_url": "https://github.com/daymade/claude-code-skills",
+      "spdx_license": "MIT",
+      "upstream_kind": "pinned"
+    },
+    {
+      "identity": "capability.debugging-network-issues",
+      "rendered_digest": "sha256:eb850ff47b2d986a41669e8f3c9c316e48671499242f92be477967785dbf14d0",
+      "source_commit": "f7c20282c514f7fbaffe8b7d1c5ed42105c7816e",
+      "source_url": "https://github.com/daymade/claude-code-skills",
+      "spdx_license": "MIT",
+      "upstream_kind": "pinned"
+    },
+    {
+      "identity": "capability.deep-research",
+      "rendered_digest": "sha256:19ac6e851c7c64e7eae0649294237e3224d0e7a23877f873ff6a44505076a8f1",
+      "source_commit": "f7c20282c514f7fbaffe8b7d1c5ed42105c7816e",
+      "source_url": "https://github.com/daymade/claude-code-skills",
+      "spdx_license": "MIT",
+      "upstream_kind": "pinned"
+    },
+    {
       "identity": "capability.skill-creator",
-      "rendered_digest": "sha256:c89a25bfd97d15bf5db102fdff98cf5db6a845e86a11ac1e4ceb6c57e0c4e586",
+      "rendered_digest": "sha256:57843cdc5cd35657c64cbb6d1cc1d2cdab76f82764644f841ecf2d55856ab493",
       "source_commit": "0a64e398ec6bb34a494f0c347e8ccae53a862f8e",
       "source_url": "https://github.com/anthropics/skills",
       "spdx_license": "Apache-2.0",
@@ -26,7 +50,7 @@
     },
     {
       "identity": "capability.proving-it-works-with-a-movie",
-      "rendered_digest": "sha256:e576d25f6ccdaa146b98faaab1038c1b7e1d1c898ad44f796c0041894441e0cb",
+      "rendered_digest": "sha256:6d2e0f56789dbd163be2dd76092ddf73fc3d967fa80578223e99be5a71235d14",
       "source_commit": "1c63ca9d81353d8aeced6edd0c5778ee6154d6ae",
       "source_url": "https://github.com/obra/superpowers",
       "spdx_license": "MIT",
@@ -118,8 +142,15 @@
     "update external-marketplace-pins cbe94d02bc8ea7375e13b39cc400e17eeabfcbee -> c2301c68838dc9832e4034558e2c3a05e78f269c (chore: bump external marketplace pins to upstream HEAD)",
     "update external-marketplace-pins 1ab7b8eeef707f21565471f11d3782fac3dd1c61 -> ff9fa8a51f422d81414fa355587620d4ad2df81c (chore: bump external marketplace pins to upstream HEAD)",
     "update external-marketplace-pins 10757690210574421f1df5f35835af8d0c74d984 -> 7e06519357777badd7a115d2014a7ef845904310 (chore: bump external marketplace pins to upstream HEAD)",
-    "add capability.proving-it-works-with-a-movie @ 1c63ca9d81353d8aeced6edd0c5778ee6154d6ae (https://github.com/obra/superpowers, MIT)"
+    "add capability.proving-it-works-with-a-movie @ 1c63ca9d81353d8aeced6edd0c5778ee6154d6ae (https://github.com/obra/superpowers, MIT)",
+    "add capability.cli-demo-generator @ f7c20282c514f7fbaffe8b7d1c5ed42105c7816e (https://github.com/daymade/claude-code-skills, MIT)",
+    "add capability.debugging-network-issues @ f7c20282c514f7fbaffe8b7d1c5ed42105c7816e (https://github.com/daymade/claude-code-skills, MIT)",
+    "add capability.deep-research @ f7c20282c514f7fbaffe8b7d1c5ed42105c7816e (https://github.com/daymade/claude-code-skills, MIT)",
+    "redigest capability.canvas-design (utf-8 read fix; content unchanged)",
+    "redigest capability.web-artifacts-builder (utf-8 read fix; content unchanged)",
+    "redigest capability.skill-creator (utf-8 read fix; content unchanged)",
+    "redigest capability.proving-it-works-with-a-movie (utf-8 read fix; content unchanged)"
   ],
-  "updated_at": "2026-09-22T18:23:16.212432Z",
+  "updated_at": "2026-09-22T20:13:21.409747Z",
   "version": "1.0.0"
 }
