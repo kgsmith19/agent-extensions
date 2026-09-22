@@ -20,6 +20,7 @@ from typing import List, Optional
 from agent_extensions.continuity.capsule import (
     Capsule,
     capsule_path,
+    read_local_overlay,
     refresh,
 )
 
@@ -65,7 +66,7 @@ def _cmd_render(args: argparse.Namespace) -> int:
     cap = Capsule.load(capsule_path(cwd, directory))
     if args.refresh:
         cap = refresh(cwd, harness=args.harness or "", model=args.model or "", directory=directory)
-    text = cap.render(args.format)
+    text = cap.render(args.format, prefix=read_local_overlay(cwd))
     if text:
         sys.stdout.write(text + "\n")
     return 0
@@ -113,7 +114,10 @@ def build_parser() -> argparse.ArgumentParser:
     cap.add_argument("--auto", action="store_true", help="refresh auto fields only")
     cap.set_defaults(func=_cmd_capture)
 
-    ren = sub.add_parser("render", help="print the capsule for injection")
+    ren = sub.add_parser(
+        "render",
+        help="print session context (gitignored AGENTS.local.md overlay + capsule)",
+    )
     _add_common(ren)
     ren.add_argument("--format", choices=["plain", "claude"], default="plain")
     ren.add_argument("--refresh", action="store_true")

@@ -18,6 +18,19 @@ blockers, decisions, evidence, open issues, harness/model, timestamp. Auto
 fields (git state, harness, model, time) are refreshed on every capture;
 manual fields persist until overwritten.
 
+## Local overlay (uncommitted)
+
+`<project>/AGENTS.local.md` is a gitignored, repo-local overlay for process you
+cannot commit — for example on a team repository. It is **additive**: unlike
+`AGENTS.override.md` or `CLAUDE.local.md`, which *shadow* a committed `AGENTS.md`,
+this file is only ever injected alongside it, so a team's own `AGENTS.md` keeps
+governing.
+
+`render` outputs the overlay first, then the capsule, so the same session-start
+injection that carries continuity also carries your local rules. Bounded at
+32 KiB. Add `AGENTS.local.md` to `.gitignore` (the standard's fragment already
+does).
+
 ## CLI
 
 ```bash
