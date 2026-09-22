@@ -9,6 +9,10 @@ from agent_extensions.schemas.extension_lock import (
     compute_digest,
 )
 
+# Default provenance for vendored skills whose VENDORED-FROM line predates the
+# optional <source-url> <spdx> columns.
+DEFAULT_SKILL_SOURCE_URL = "https://github.com/anthropics/skills"
+
 
 def _rendered_digest_for_skill(skill_dir: Path) -> str:
     """Digest of the canonical skill inventory (SKILL.md + LICENSE.txt)."""
@@ -22,6 +26,18 @@ def _rendered_digest_for_skill(skill_dir: Path) -> str:
         sort_keys=True,
     )
     return compute_digest(canonical)
+
+
+def _license_from_file(skill_dir: Path) -> str:
+    """SPDX id inferred from a skill's LICENSE.txt; Apache-2.0 when absent/unknown."""
+    lic = skill_dir / "LICENSE.txt"
+    if lic.exists():
+        head = lic.read_text()[:2000]
+        if "MIT License" in head:
+            return "MIT"
+        if "Apache License" in head:
+            return "Apache-2.0"
+    return "Apache-2.0"
 
 
 def build_lock_from_repo(repo_root: Union[str, Path]) -> ExtensionsLock:
@@ -45,22 +61,24 @@ def build_lock_from_repo(repo_root: Union[str, Path]) -> ExtensionsLock:
             for line in vf.read_text().splitlines():
                 parts = line.split()
                 if len(parts) >= 2:
-                    vendored[parts[0]] = parts[1]
+                    vendored[parts[0]] = {
+                        "commit": parts[1],
+                        "source_url": (
+                            parts[3] if len(parts) >= 4 else DEFAULT_SKILL_SOURCE_URL
+                        ),
+                        "license": parts[4] if len(parts) >= 5 else None,
+                    }
         for skill_dir in sorted(skills_dir.iterdir()):
             if not skill_dir.is_dir() or not (skill_dir / "SKILL.md").exists():
                 continue
-            license_id = "Apache-2.0"
-            lic = skill_dir / "LICENSE.txt"
-            if lic.exists():
-                head = lic.read_text()[:2000]
-                if "Apache License" in head:
-                    license_id = "Apache-2.0"
+            meta = vendored.get(skill_dir.name, {})
+            license_id = meta.get("license") or _license_from_file(skill_dir)
             assert license_id in COMMON_SPDX_LICENSES
             entries.append(
                 ExtensionLock(
                     identity=f"capability.{skill_dir.name}",
-                    source_url="https://github.com/anthropics/skills",
-                    source_commit=vendored.get(skill_dir.name, "0" * 40),
+                    source_url=meta.get("source_url", DEFAULT_SKILL_SOURCE_URL),
+                    source_commit=meta.get("commit", "0" * 40),
                     spdx_license=license_id,
                     rendered_digest=_rendered_digest_for_skill(skill_dir),
                     upstream_kind="pinned",

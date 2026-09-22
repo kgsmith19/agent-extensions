@@ -16,6 +16,13 @@
       "version": "1.0.0",
       "source": "./plugins/general-skills",
       "author": { "name": "Kyle Smith" }
+    },
+    {
+      "name": "superpowers-skills",
+      "description": "Cross-provider process skills vendored from obra/superpowers (MIT), starting with proving-it-works-with-a-movie",
+      "version": "1.0.0",
+      "source": "./plugins/superpowers-skills",
+      "author": { "name": "Kyle Smith" }
     }
   ]
 }

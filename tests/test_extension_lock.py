@@ -125,6 +125,11 @@ def test_build_lock_reads_every_source_live():
     by_id = {e.identity: e for e in lock.entries}
     # Own skills carry their vendored pins.
     assert by_id["capability.skill-creator"].source_commit.startswith("0a64e398")
+    # Vendored skills may come from non-anthropics sources with their own license.
+    assert by_id["capability.proving-it-works-with-a-movie"].source_url == (
+        "https://github.com/obra/superpowers"
+    )
+    assert by_id["capability.proving-it-works-with-a-movie"].spdx_license == "MIT"
     # External marketplace pins preserved verbatim.
     assert by_id["marketplace.claude-plugins-official"].source_commit == (
         "c2301c68838dc9832e4034558e2c3a05e78f269c"
