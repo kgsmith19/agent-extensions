@@ -27,15 +27,15 @@
     {
       "identity": "marketplace.claude-plugins-official",
       "rendered_digest": "sha256:b6b454097f10f7de2f0397ca1fd9c0a45feb4928b606cc31b0db87220f77e18a",
-      "source_commit": "cbe94d02bc8ea7375e13b39cc400e17eeabfcbee",
+      "source_commit": "c2301c68838dc9832e4034558e2c3a05e78f269c",
       "source_url": "https://github.com/anthropics/claude-plugins-official",
       "spdx_license": "Apache-2.0",
       "upstream_kind": "pinned"
     },
     {
       "identity": "marketplace.superpowers-marketplace",
-      "rendered_digest": "sha256:a8873103850d623faa90fc11861a19d1296ffd26b9f083f01f3e9707707af91a",
-      "source_commit": "1ab7b8eeef707f21565471f11d3782fac3dd1c61",
+      "rendered_digest": "sha256:4e725d49dcc8f60d472965e3f20de330c0e48d5d2322d76bfce6b724743b37c7",
+      "source_commit": "ff9fa8a51f422d81414fa355587620d4ad2df81c",
       "source_url": "https://github.com/obra/superpowers-marketplace",
       "spdx_license": "Apache-2.0",
       "upstream_kind": "pinned"
@@ -66,8 +66,8 @@
     },
     {
       "identity": "plugin.superpowers-marketplace.episodic-memory",
-      "rendered_digest": "sha256:eaefc578ed230bd504c93624bf60318320ce25df757511c68df89e1603bcae22",
-      "source_commit": "10757690210574421f1df5f35835af8d0c74d984",
+      "rendered_digest": "sha256:e7cc8d69a2a23fa971ea2483b579205a0bbc5e56a9d127ae7bcef0352387f2fb",
+      "source_commit": "7e06519357777badd7a115d2014a7ef845904310",
       "source_url": "https://github.com/obra/superpowers-marketplace",
       "spdx_license": "Apache-2.0",
       "upstream_kind": "pinned"
@@ -106,8 +106,11 @@
     }
   ],
   "history": [
-    "initial lock: Stage 17, pins preserved verbatim from VENDORED-FROM + external-marketplaces.json"
+    "initial lock: Stage 17, pins preserved verbatim from VENDORED-FROM + external-marketplaces.json",
+    "update external-marketplace-pins cbe94d02bc8ea7375e13b39cc400e17eeabfcbee -> c2301c68838dc9832e4034558e2c3a05e78f269c (chore: bump external marketplace pins to upstream HEAD)",
+    "update external-marketplace-pins 1ab7b8eeef707f21565471f11d3782fac3dd1c61 -> ff9fa8a51f422d81414fa355587620d4ad2df81c (chore: bump external marketplace pins to upstream HEAD)",
+    "update external-marketplace-pins 10757690210574421f1df5f35835af8d0c74d984 -> 7e06519357777badd7a115d2014a7ef845904310 (chore: bump external marketplace pins to upstream HEAD)"
   ],
-  "updated_at": "2026-09-18T20:29:53.724361Z",
+  "updated_at": "2026-09-22T17:39:58.085970Z",
   "version": "1.0.0"
 }
