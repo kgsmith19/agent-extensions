@@ -12,10 +12,10 @@ rather than leaving the gap silent.
 - **code-review** (from claude-plugins-official): code-review
 - **commit-commands** (from claude-plugins-official): clean_gone commit-push-pr commit
 - **feature-dev** (from claude-plugins-official): feature-dev
+- **greptile** (from claude-plugins-official): login review
 - **hookify** (from claude-plugins-official): configure help hookify list
 - **plugin-dev** (from claude-plugins-official): create-plugin
-- **postman** (from claude-plugins-official): deploy-flow docs generate-spec get-flow-run learn list-flows mock run-collection search security send-request setup sync test trigger-flow
 - **pr-review-toolkit** (from claude-plugins-official): review-pr
 - **ralph-loop** (from claude-plugins-official): cancel-ralph help ralph-loop
 
-10 plugin(s), 31 command(s) total — none ported.
+10 plugin(s), 18 command(s) total — none ported.

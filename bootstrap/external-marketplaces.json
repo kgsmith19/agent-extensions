@@ -3,7 +3,7 @@
     {
       "name": "claude-plugins-official",
       "repo": "anthropics/claude-plugins-official",
-      "pinnedCommit": "cbe94d02bc8ea7375e13b39cc400e17eeabfcbee",
+      "pinnedCommit": "c2301c68838dc9832e4034558e2c3a05e78f269c",
       "plugins": [
         "agent-sdk-dev",
         "atomic-agents",
@@ -42,7 +42,7 @@
     {
       "name": "superpowers-marketplace",
       "repo": "obra/superpowers-marketplace",
-      "pinnedCommit": "1ab7b8eeef707f21565471f11d3782fac3dd1c61",
+      "pinnedCommit": "ff9fa8a51f422d81414fa355587620d4ad2df81c",
       "plugins": [
         {
           "name": "claude-session-driver",
@@ -58,7 +58,7 @@
         },
         {
           "name": "episodic-memory",
-          "resolvedCommit": "10757690210574421f1df5f35835af8d0c74d984"
+          "resolvedCommit": "7e06519357777badd7a115d2014a7ef845904310"
         },
         {
           "name": "private-journal-mcp",

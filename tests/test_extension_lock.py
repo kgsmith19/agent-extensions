@@ -127,10 +127,10 @@ def test_build_lock_reads_every_source_live():
     assert by_id["capability.skill-creator"].source_commit.startswith("0a64e398")
     # External marketplace pins preserved verbatim.
     assert by_id["marketplace.claude-plugins-official"].source_commit == (
-        "cbe94d02bc8ea7375e13b39cc400e17eeabfcbee"
+        "c2301c68838dc9832e4034558e2c3a05e78f269c"
     )
     assert by_id["marketplace.superpowers-marketplace"].source_commit == (
-        "1ab7b8eeef707f21565471f11d3782fac3dd1c61"
+        "ff9fa8a51f422d81414fa355587620d4ad2df81c"
     )
     assert by_id["plugin.superpowers-marketplace.superpowers-lab"].source_commit == (
         "51111f74f24058117752d9aa917cb19859f8ec86"
