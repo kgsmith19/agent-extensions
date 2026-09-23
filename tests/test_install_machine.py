@@ -123,3 +123,54 @@ def test_shim_idempotent_mtime(home):
     r = stage_shims(_repo(), home)
     assert "up to date" in r.detail
     assert (home / "AGENTS.md").stat().st_mtime_ns == t
+
+
+# ---- Task 3: hooks ----
+from agent_extensions.install.machine import stage_hooks
+
+
+def test_hooks_merge_preserves_foreign_keys(home):
+    p = home / ".claude" / "settings.json"
+    p.parent.mkdir(parents=True)
+    p.write_text(json.dumps({"model": "opus", "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo mine"}]}]}}), encoding="utf-8")
+    r = stage_hooks(_repo(), home)
+    assert r.status == "applied"
+    data = json.loads(p.read_text(encoding="utf-8"))
+    assert data["model"] == "opus"
+    assert data["hooks"]["Stop"] == [{"hooks": [{"type": "command", "command": "echo mine"}]}]
+    assert any("claude_hook.py" in h["command"] for e in data["hooks"]["SessionStart"] for h in e["hooks"])
+    assert any("claude_hook.py" in h["command"] for e in data["hooks"]["PreCompact"] for h in e["hooks"])
+
+
+def test_hooks_creates_missing_settings(home):
+    r = stage_hooks(_repo(), home)
+    assert r.status == "applied"
+    pi = json.loads((home / ".pi" / "agent" / "settings.json").read_text(encoding="utf-8"))
+    assert any("pi-extension.ts" in e for e in pi["extensions"])
+
+
+def test_hooks_idempotent_mtime(home):
+    stage_hooks(_repo(), home)
+    t = (home / ".claude" / "settings.json").stat().st_mtime_ns
+    r = stage_hooks(_repo(), home)
+    assert "already" in r.detail
+    assert (home / ".claude" / "settings.json").stat().st_mtime_ns == t
+
+
+def test_hooks_corrupt_json_fails_naming_path(home):
+    p = home / ".claude" / "settings.json"
+    p.parent.mkdir(parents=True)
+    p.write_text("{not json", encoding="utf-8")
+    r = stage_hooks(_repo(), home)
+    assert r.status == "failed" and "settings.json" in r.detail
+
+
+def test_hooks_backup_before_first_write(home, tmp_path):
+    br = tmp_path / "backups"
+    p = home / ".claude" / "settings.json"
+    p.parent.mkdir(parents=True)
+    p.write_text("{}", encoding="utf-8")
+    stage_hooks(_repo(), home, backup_root=br)
+    assert len(list(br.rglob("settings.json"))) == 1
+    stage_hooks(_repo(), home, backup_root=br)  # no change -> no new backup
+    assert len(list(br.rglob("settings.json"))) == 1

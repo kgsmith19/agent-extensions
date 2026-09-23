@@ -154,3 +154,127 @@ def stage_shims(repo_root: Path, home: Path) -> StageResult:
         return "; ".join(notes)
 
     return _run_stage("shims", work, enabled=True)
+
+
+# ---- hooks (Task 3) ----
+
+import json
+from datetime import datetime
+
+CLAUDE_HOOK_REL = "agent_extensions/continuity/adapters/claude_hook.py"
+PI_EXTENSION_REL = "agent_extensions/continuity/adapters/pi-extension.ts"
+
+
+def _read_json(path: Path) -> dict:
+    """Parse a JSON settings file; corrupt content raises ValueError naming the path."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"corrupt JSON at {path}: {exc}") from exc
+
+
+def _write_json(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8", newline="\n")
+
+
+def backup(path: Path, backup_root: Path) -> Path:
+    """Copy a pre-existing file into <backup_root>/install/<timestamp>/ before
+    a managed write. Caller only invokes this when a change is imminent, so
+    idempotent reruns never create backups (plan ruling R4)."""
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    dest = Path(backup_root) / "install" / stamp / path.name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(path.read_text(encoding="utf-8"), encoding="utf-8", newline="\n")
+    return dest
+
+
+def _hook_entry(command: str) -> dict:
+    return {"hooks": [{"type": "command", "command": command}]}
+
+
+def stage_hooks(
+    install_repo: Path,
+    home: Path,
+    backup_root: Path | None = None,
+) -> StageResult:
+    """Wire continuity adapters additively: Claude SessionStart/PreCompact
+    hooks and the pi extensions array. JSON merges never touch foreign keys;
+    a change is written only when something is actually missing (idempotent);
+    corrupt JSON fails the stage naming the path; first write backs up."""
+
+    def work() -> str:
+        repo = Path(install_repo)
+        notes: list[str] = []
+        claude_path = home / ".claude" / "settings.json"
+        claude_cmd = "python \"" + (repo / CLAUDE_HOOK_REL).as_posix() + "\""
+
+        current = claude_path.read_text(encoding="utf-8") if claude_path.exists() else None
+        if current is not None and _looks_like_json(current):
+            data = _read_json(claude_path)
+        elif current is None:
+            data = {}
+        else:
+            data = _read_json(claude_path)
+        changed_claude = False
+        hooks = data.get("hooks")
+        if not isinstance(hooks, dict):
+            hooks = {}
+            data["hooks"] = hooks
+            changed_claude = True
+        for event in ("SessionStart", "PreCompact"):
+            entries = hooks.get(event)
+            if not isinstance(entries, list):
+                hooks[event] = []
+                changed_claude = True
+            if not any(
+                isinstance(h, dict) and claude_cmd in str(h.get("command", ""))
+                for e in hooks[event]
+                for h in (e.get("hooks") or [])
+            ):
+                hooks[event].append(_hook_entry(claude_cmd))
+                changed_claude = True
+        if changed_claude:
+            if current is not None and backup_root is not None:
+                backup(claude_path, backup_root)
+            _write_json(claude_path, data)
+            notes.append("claude: merged")
+        else:
+            notes.append("claude: already current")
+
+        pi_path = home / ".pi" / "agent" / "settings.json"
+        ext_abs = (repo / PI_EXTENSION_REL).resolve().as_posix()
+        changed_pi = False
+        if pi_path.exists():
+            pi_current = pi_path.read_text(encoding="utf-8")
+            pi_data = _read_json(pi_path)
+        else:
+            pi_current = None
+            pi_data = {}
+            changed_pi = True
+        exts = pi_data.get("extensions")
+        if not isinstance(exts, list):
+            exts = []
+            pi_data["extensions"] = exts
+            changed_pi = True
+        if ext_abs not in exts:
+            exts.append(ext_abs)
+            changed_pi = True
+        if changed_pi:
+            if pi_current is not None and backup_root is not None:
+                backup(pi_path, backup_root)
+            _write_json(pi_path, pi_data)
+            notes.append("pi: merged")
+        else:
+            notes.append("pi: already current")
+        return "; ".join(notes)
+
+    return _run_stage("hooks", work, enabled=True)
+
+
+def _looks_like_json(text: str) -> bool:
+    try:
+        json.loads(text)
+        return True
+    except json.JSONDecodeError:
+        return False
