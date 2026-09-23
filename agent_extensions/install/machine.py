@@ -315,10 +315,70 @@ import shutil
 MANAGED_SH_MARKER = "# managed-by: agent-extensions"
 
 
+WIN_PATH_ENTRY = "%USERPROFILE%\\bin"
+
+
+class PathEntryResult:
+    """Outcome of a user-PATH ensure: appended or already present."""
+
+    def __init__(self, appended: bool, before: str, after: str = ""):
+        self.appended = appended
+        self.before = before
+        self.after = after
+
+
+def _user_path_reader() -> str:
+    """Read the USER-scope PATH from the registry (raw, keeps %VAR% tokens)."""
+    try:
+        proc = subprocess.run(
+            ["reg", "query", "HKCU\\Environment", "/v", "Path"],
+            capture_output=True, text=True, timeout=30,
+        )
+    except (FileNotFoundError, OSError):
+        return ""
+    if proc.returncode != 0:
+        return ""
+    for line in proc.stdout.splitlines():
+        if "Path" in line and "REG_" in line:
+            cols = line.split(None, 3)
+            return cols[3] if len(cols) > 3 else ""
+    return ""
+
+
+def _user_path_writer(new_value: str) -> None:
+    """Append-only write of the USER PATH, preserving REG_EXPAND_SZ so %VAR%
+    tokens keep expanding (a plain SetEnvironmentVariable rewrite would
+    flatten them)."""
+    proc = subprocess.run(
+        ["reg", "add", "HKCU\\Environment", "/v", "Path", "/t", "REG_EXPAND_SZ", "/d", new_value, "/f"],
+        capture_output=True, text=True, timeout=30,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"reg add failed: {proc.stderr.strip()[:200]}")
+
+
+def ensure_user_path_entry(entry: str, reader=None, writer=None) -> PathEntryResult:
+    """Idempotent, additive: append `entry` to the USER PATH exactly once.
+    Callables are injectable for tests; defaults use the raw registry so
+    %VAR% references in the existing value are never expanded or lost."""
+    read = reader or _user_path_reader
+    write = writer or _user_path_writer
+    current = read() or ""
+    parts = [p.strip().strip("\"") for p in current.split(";") if p.strip()]
+    norm = entry.lower().rstrip("\\")
+    if any(p.lower().rstrip("\\") == norm for p in parts):
+        return PathEntryResult(False, current, current)
+    new_value = (current.rstrip(";") + ";" + entry) if current.strip() else entry
+    write(new_value)
+    return PathEntryResult(True, current, new_value)
+
+
 def stage_cli_shim(install_repo: Path, home: Path, env: dict | None = None) -> StageResult:
-    """Render the everyday `ae` launcher into ~/bin (name via AE_COMMAND).
-    Marker-guarded like shims; skipped when ~/bin cannot exist; notes when the
-    bin dir is not on PATH so the owner gets the exact export line."""
+    """Render the everyday `ae` launcher set into ~/bin — bash, cmd, and
+    PowerShell variants (Windows resolves `ae` via ae.cmd; POSIX via ae) —
+    then make the bin dir discoverable: user-PATH registry entry on Windows
+    (idempotent, %VAR%-preserving), ~/.profile + ~/.bashrc export on POSIX.
+    Marker-guarded like shims; skipped when ~/bin cannot exist."""
 
     def work() -> str:
         e = env if env is not None else os.environ
@@ -330,25 +390,38 @@ def stage_cli_shim(install_repo: Path, home: Path, env: dict | None = None) -> S
             except OSError as exc:
                 return f"skipped (cannot create {bin_dir}: {exc})"
         notes: list[str] = []
-        rendered = render_template(
-            install_repo, "ae-launcher.sh"
-        ).replace("{{INSTALL_DIR}}", Path(install_repo).resolve().as_posix())
-        target = bin_dir / name
-        if target.exists():
-            current = target.read_text(encoding="utf-8")
-            if MANAGED_SH_MARKER not in current:
-                return f"skipped (unmanaged file present: {target})"
-            if current == rendered:
-                notes.append("up to date")
+        install_abs = Path(install_repo).resolve().as_posix()
+        specs = [("ae", "ae-launcher.sh"), (name + ".cmd", "ae-launcher.cmd"), (name + ".ps1", "ae-launcher.ps1")]
+        for target_name, template_name in specs:
+            rendered = render_template(install_repo, template_name).replace("{{INSTALL_DIR}}", install_abs)
+            target = bin_dir / target_name
+            if target.exists():
+                current = target.read_text(encoding="utf-8")
+                if MANAGED_SH_MARKER not in current:
+                    notes.append(f"{target_name}: skipped (unmanaged file present: {target})")
+                    continue
+                if current == rendered:
+                    notes.append(f"{target_name}: up to date")
+                else:
+                    _write_text(target, rendered)
+                    notes.append(f"{target_name}: updated")
             else:
                 _write_text(target, rendered)
-                notes.append("updated")
+                notes.append(f"{target_name}: installed")
+        posix_path_note = f"NOTE: {bin_dir} not on PATH — add: export PATH=\"{bin_dir}:$PATH\""
+        if os.name == "nt":
+            try:
+                result = ensure_user_path_entry(WIN_PATH_ENTRY)
+                notes.append(
+                    "user PATH: appended %USERPROFILE%\\bin (new terminals pick it up)"
+                    if result.appended
+                    else "user PATH: already contains %USERPROFILE%\\bin"
+                )
+            except Exception as exc:  # noqa: BLE001 — report, never raise out of the stage
+                notes.append(f"user PATH: failed ({exc}); {posix_path_note}")
         else:
-            _write_text(target, rendered)
-            notes.append("installed")
-        if shutil.which(name) is None:
-            notes.append(f"NOTE: {bin_dir} not on PATH — add: export PATH=\"{bin_dir}:$PATH\"")
-        return f"{name}: " + "; ".join(notes)
+            notes.append(posix_path_note)
+        return "; ".join(notes)
 
     return _run_stage("cli-shim", work, enabled=True)
 

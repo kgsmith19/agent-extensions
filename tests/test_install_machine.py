@@ -230,3 +230,55 @@ def test_cli_shim_respects_env_override(home):
     assert r.status == "applied"
     txt = (home / "bin" / "ae").read_text(encoding="utf-8")
     assert '${AGENT_EXTENSIONS_DIR:-' in txt
+
+
+# ---- Windows launcher coverage (cmd/PowerShell) + PATH wiring ----
+from agent_extensions.install.machine import ensure_user_path_entry, stage_cli_shim
+
+
+def test_cli_shim_writes_all_three_launchers(home):
+    r = stage_cli_shim(_repo(), home)
+    assert r.status == "applied"
+    bin_d = home / "bin"
+    sh = (bin_d / "ae").read_text(encoding="utf-8")
+    cmd = (bin_d / "ae.cmd").read_text(encoding="utf-8")
+    ps1 = (bin_d / "ae.ps1").read_text(encoding="utf-8")
+    assert "agent_extensions.install" in sh and "managed-by" in sh
+    assert "agent_extensions.install" in cmd and "%*" in cmd and "managed-by" in cmd
+    assert "agent_extensions.install" in ps1 and "managed-by" in ps1
+
+
+def test_cli_shim_idempotent_across_all_launchers(home):
+    stage_cli_shim(_repo(), home)
+    mt = {n: (home / "bin" / n).stat().st_mtime_ns for n in ("ae", "ae.cmd", "ae.ps1")}
+    r = stage_cli_shim(_repo(), home)
+    assert "up to date" in r.detail
+    assert all((home / "bin" / n).stat().st_mtime_ns == t for n, t in mt.items())
+
+
+def test_ensure_user_path_entry_appends_when_missing():
+    calls = []
+    r = ensure_user_path_entry(
+        r"%USERPROFILE%\bin",
+        reader=lambda: r"C:\tools;%USERPROFILE%\Scripts",
+        writer=lambda new: calls.append(new),
+    )
+    assert r.appended is True
+    assert len(calls) == 1
+    assert calls[0].endswith(r"%USERPROFILE%\bin")
+
+
+def test_ensure_user_path_entry_idempotent_when_present():
+    calls = []
+    r = ensure_user_path_entry(
+        r"%USERPROFILE%\bin",
+        reader=lambda: r"C:\tools;%USERPROFILE%\bin;C:\other",
+        writer=lambda new: calls.append(new),
+    )
+    assert r.appended is False and calls == []
+
+
+def test_ensure_user_path_entry_empty_path():
+    calls = []
+    r = ensure_user_path_entry(r"%USERPROFILE%\bin", reader=lambda: "", writer=lambda new: calls.append(new))
+    assert r.appended is True and calls == [r"%USERPROFILE%\bin"]
