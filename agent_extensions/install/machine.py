@@ -397,7 +397,9 @@ def stage_cli_shim(install_repo: Path, home: Path, env: dict | None = None) -> S
             target = bin_dir / target_name
             if target.exists():
                 current = target.read_text(encoding="utf-8")
-                if MANAGED_SH_MARKER not in current:
+                # Marker is language-agnostic: `# managed-by:` (sh/ps1) or
+                # `rem managed-by:` (cmd). Check the payload, not the prefix.
+                if "managed-by: agent-extensions" not in current:
                     notes.append(f"{target_name}: skipped (unmanaged file present: {target})")
                     continue
                 if current == rendered:

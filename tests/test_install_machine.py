@@ -282,3 +282,17 @@ def test_ensure_user_path_entry_empty_path():
     calls = []
     r = ensure_user_path_entry(r"%USERPROFILE%\bin", reader=lambda: "", writer=lambda new: calls.append(new))
     assert r.appended is True and calls == [r"%USERPROFILE%\bin"]
+
+
+def test_cli_shim_recognizes_cmd_comment_marker(home):
+    """A managed ae.cmd uses `rem managed-by:` (cmd comment syntax) — it must
+    be recognized as ours, not misreported as unmanaged."""
+    bin_d = home / "bin"
+    bin_d.mkdir(parents=True)
+    (bin_d / "ae.cmd").write_text(
+        "@echo off\r\nrem managed-by: agent-extensions (rendered from templates/ae-launcher.cmd)\nold\n",
+        encoding="utf-8", newline="\n",
+    )
+    r = stage_cli_shim(_repo(), home)
+    assert r.status == "applied"
+    assert "ae.cmd: updated" in r.detail  # ours -> converge; NOT "unmanaged"
