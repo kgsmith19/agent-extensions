@@ -10,4 +10,6 @@ __pycache__/
 # re-include the repo own template whose name collides with the global excludes
 !agent_extensions/install/templates/AGENTS.local.md
 .superpowers/
-docs/superpowers/plans/
+# only the legacy untracked Stage 15b scratch plan is ignored —
+# plan docs ARE committed in this repo (see docs/superpowers/plans/*.md)
+docs/superpowers/plans/2026-09-18-stage-15b-sibling-contract-agent-extensions.md
