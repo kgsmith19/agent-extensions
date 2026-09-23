@@ -222,3 +222,11 @@ def test_hooks_converge_stale_our_entries(home):
     ours = [e for e in entries if any("claude_hook.py" in h.get("command", "") for h in e.get("hooks", []))]
     assert len(ours) == 1
     assert Path(_repo()).as_posix() in ours[0]["hooks"][0]["command"]
+
+
+def test_cli_shim_respects_env_override(home):
+    """Rendered launcher defaults to the install path but lets AGENT_EXTENSIONS_DIR win."""
+    r = stage_cli_shim(_repo(), home)
+    assert r.status == "applied"
+    txt = (home / "bin" / "ae").read_text(encoding="utf-8")
+    assert '${AGENT_EXTENSIONS_DIR:-' in txt

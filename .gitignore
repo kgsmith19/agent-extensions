@@ -6,3 +6,8 @@ Thumbs.db
 __pycache__/
 *.pyc
 .bootstrap-out/
+
+# re-include the repo own template whose name collides with the global excludes
+!agent_extensions/install/templates/AGENTS.local.md
+.superpowers/
+docs/superpowers/plans/
