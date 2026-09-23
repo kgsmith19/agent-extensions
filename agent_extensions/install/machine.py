@@ -77,3 +77,80 @@ def _excludes_target(home: Path) -> Path | None:
     if set_result.returncode != 0:
         return None
     return home / ".config" / "git" / "ignore"
+
+
+# ---- shims (Task 2) ----
+
+from dataclasses import dataclass
+from typing import Callable
+
+
+@dataclass(frozen=True)
+class ShimSpec:
+    """One harness shim: template file, target path, and presence gate.
+
+    gate(home) returning None means ungated (always applicable); otherwise the
+    shim applies only when the gate path exists (capability-gated, never
+    creates harness dirs for harnesses this machine does not have).
+    """
+
+    name: str
+    template: str
+    target: Callable[[Path], Path]
+    gate: Callable[[Path], Path | None]
+
+
+def _p(*parts: str) -> Callable[[Path], Path]:
+    return lambda home: home.joinpath(*parts)
+
+
+SHIMS: list[ShimSpec] = [
+    ShimSpec("baseline", "AGENTS.md", _p("AGENTS.md"), lambda home: None),
+    ShimSpec("pi", "pi-AGENTS.md", _p(".pi", "agent", "AGENTS.md"), _p(".pi", "agent")),
+    ShimSpec("claude", "claude-CLAUDE.md", _p(".claude", "CLAUDE.md"), _p(".claude")),
+    ShimSpec("codex", "codex-AGENTS.md", _p(".codex", "AGENTS.md"), _p(".codex")),
+    ShimSpec("gemini", "gemini-GEMINI.md", _p(".gemini", "GEMINI.md"), _p(".gemini")),
+    ShimSpec("kilo", "kilo-HARNESS.md", _p(".config", "kilo", "HARNESS.md"), _p(".config", "kilo")),
+]
+
+
+def render_template(repo_root: Path, name: str) -> str:
+    """Read a versioned template from install/templates (marker embedded)."""
+    return (Path(repo_root) / "agent_extensions" / "install" / "templates" / name).read_text(encoding="utf-8")
+
+
+def _write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8", newline="\n")
+
+
+def stage_shims(repo_root: Path, home: Path) -> StageResult:
+    """Marker-guarded shim install: unmarked existing files are skipped loudly
+    (never clobbered); marked files converge to the template; absent targets
+    are installed. Baseline AGENTS.md is ungated; harness shims are gated."""
+
+    def work() -> str:
+        notes: list[str] = []
+        for spec in SHIMS:
+            gate = spec.gate(home)
+            if gate is not None and not gate.exists():
+                notes.append(f"{spec.name}: skipped (gate {gate} absent)")
+                continue
+            target = spec.target(home)
+            rendered = render_template(repo_root, spec.template)
+            if target.exists():
+                current = target.read_text(encoding="utf-8")
+                if install.MANAGED_MD_MARKER not in current:
+                    notes.append(f"{spec.name}: skipped (unmanaged file present: {target})")
+                    continue
+                if current == rendered:
+                    notes.append(f"{spec.name}: up to date")
+                    continue
+                _write_text(target, rendered)
+                notes.append(f"{spec.name}: updated")
+            else:
+                _write_text(target, rendered)
+                notes.append(f"{spec.name}: installed")
+        return "; ".join(notes)
+
+    return _run_stage("shims", work, enabled=True)

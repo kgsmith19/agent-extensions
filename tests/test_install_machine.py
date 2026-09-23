@@ -56,3 +56,70 @@ def test_missing_git_is_skipped_not_failed(home, monkeypatch):
     monkeypatch.setenv("PATH", "")
     r = stage_gitignore(home)
     assert r.status == "skipped"
+
+
+# ---- Task 2: shims ----
+from agent_extensions.install.machine import stage_shims  # noqa: E402
+
+
+def _shim_gates(home: Path) -> dict[str, Path]:
+    gates = {}
+    for d in (".pi/agent", ".claude", ".codex", ".gemini", ".config/kilo"):
+        p = home / d
+        p.mkdir(parents=True, exist_ok=True)
+        gates[d] = p
+    return gates
+
+
+def test_fresh_home_writes_ungated_baseline_and_gated_shims(home):
+    _shim_gates(home)
+    r = stage_shims(_repo(), home)
+    assert r.status == "applied"
+    baseline = (home / "AGENTS.md").read_text(encoding="utf-8")
+    assert baseline.count(MANAGED_MD_MARKER) == 1
+    assert "Global Agent Rules" in baseline
+    assert "~/.config/agents" in baseline and "C:\\Users" not in baseline
+    pi_shim = (home / ".pi" / "agent" / "AGENTS.md").read_text(encoding="utf-8")
+    assert "pi Global Instructions" in pi_shim and MANAGED_MD_MARKER in pi_shim
+    assert "C:\\Users" not in (home / ".claude" / "CLAUDE.md").read_text(encoding="utf-8")
+
+
+def test_missing_gate_dir_is_skipped_with_reason(home):
+    r = stage_shims(_repo(), home)
+    assert r.status == "applied"
+    assert not (home / ".codex").exists()
+    assert "codex: skipped" in r.detail
+    assert "kilo: skipped" in r.detail
+
+
+def test_unmanaged_shim_never_clobbered(home):
+    _shim_gates(home)
+    target = home / ".claude" / "CLAUDE.md"
+    target.write_text("# my hand-written rules\nKEEP ME\n", encoding="utf-8")
+    r = stage_shims(_repo(), home)
+    assert "KEEP ME" in target.read_text(encoding="utf-8")
+    assert "unmanaged" in r.detail
+
+
+def test_unmanaged_baseline_never_clobbered(home):
+    _shim_gates(home)
+    (home / "AGENTS.md").write_text("# mine\n", encoding="utf-8")
+    r = stage_shims(_repo(), home)
+    assert "# mine" in (home / "AGENTS.md").read_text(encoding="utf-8")
+    assert "unmanaged" in r.detail
+
+
+def test_managed_shim_updated_on_template_change(home):
+    _shim_gates(home)
+    (home / "AGENTS.md").write_text(MANAGED_MD_MARKER + "\nstale\n", encoding="utf-8")
+    stage_shims(_repo(), home)
+    assert "ZZSTALETOKENZZ" not in (home / "AGENTS.md").read_text(encoding="utf-8")
+
+
+def test_shim_idempotent_mtime(home):
+    _shim_gates(home)
+    stage_shims(_repo(), home)
+    t = (home / "AGENTS.md").stat().st_mtime_ns
+    r = stage_shims(_repo(), home)
+    assert "up to date" in r.detail
+    assert (home / "AGENTS.md").stat().st_mtime_ns == t
