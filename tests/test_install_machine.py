@@ -174,3 +174,33 @@ def test_hooks_backup_before_first_write(home, tmp_path):
     assert len(list(br.rglob("settings.json"))) == 1
     stage_hooks(_repo(), home, backup_root=br)  # no change -> no new backup
     assert len(list(br.rglob("settings.json"))) == 1
+
+
+# ---- Task 4: cli-shim ----
+from agent_extensions.install.machine import stage_cli_shim
+
+
+def test_cli_shim_written_and_managed(home):
+    r = stage_cli_shim(_repo(), home)
+    assert r.status == "applied"
+    p = home / "bin" / "ae"
+    assert p.exists()
+    txt = p.read_text(encoding="utf-8")
+    assert "managed-by: agent-extensions" in txt
+    assert "agent_extensions.install" in txt
+
+
+def test_cli_shim_never_clobbers_unmanaged(home):
+    (home / "bin").mkdir(parents=True)
+    (home / "bin" / "ae").write_text("#!/bin/sh\necho mine\n", encoding="utf-8")
+    r = stage_cli_shim(_repo(), home)
+    assert "unmanaged" in r.detail
+    assert "echo mine" in (home / "bin" / "ae").read_text(encoding="utf-8")
+
+
+def test_cli_shim_idempotent_mtime(home):
+    stage_cli_shim(_repo(), home)
+    t = (home / "bin" / "ae").stat().st_mtime_ns
+    r = stage_cli_shim(_repo(), home)
+    assert "up to date" in r.detail
+    assert (home / "bin" / "ae").stat().st_mtime_ns == t

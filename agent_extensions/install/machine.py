@@ -278,3 +278,62 @@ def _looks_like_json(text: str) -> bool:
         return True
     except json.JSONDecodeError:
         return False
+
+
+# ---- cli-shim (Task 4) ----
+
+import shutil
+
+MANAGED_SH_MARKER = "# managed-by: agent-extensions"
+
+
+def stage_cli_shim(install_repo: Path, home: Path, env: dict | None = None) -> StageResult:
+    """Render the everyday `ae` launcher into ~/bin (name via AE_COMMAND).
+    Marker-guarded like shims; skipped when ~/bin cannot exist; notes when the
+    bin dir is not on PATH so the owner gets the exact export line."""
+
+    def work() -> str:
+        e = env if env is not None else os.environ
+        name = e.get("AE_COMMAND", "ae")
+        bin_dir = home / "bin"
+        if not bin_dir.exists():
+            try:
+                bin_dir.mkdir(parents=True)
+            except OSError as exc:
+                return f"skipped (cannot create {bin_dir}: {exc})"
+        notes: list[str] = []
+        rendered = render_template(
+            install_repo, "ae-launcher.sh"
+        ).replace("{{INSTALL_DIR}}", Path(install_repo).resolve().as_posix())
+        target = bin_dir / name
+        if target.exists():
+            current = target.read_text(encoding="utf-8")
+            if MANAGED_SH_MARKER not in current:
+                return f"skipped (unmanaged file present: {target})"
+            if current == rendered:
+                notes.append("up to date")
+            else:
+                _write_text(target, rendered)
+                notes.append("updated")
+        else:
+            _write_text(target, rendered)
+            notes.append("installed")
+        if shutil.which(name) is None:
+            notes.append(f"NOTE: {bin_dir} not on PATH — add: export PATH=\"{bin_dir}:$PATH\"")
+        return f"{name}: " + "; ".join(notes)
+
+    return _run_stage("cli-shim", work, enabled=True)
+
+
+def bootstrap(install_repo: Path, home: Path | None = None, env: dict | None = None):
+    """Machine bootstrap: gitignore → shims → hooks → cli-shim, then the
+    capability-bundle sync stages delegated (never duplicated)."""
+    from agent_extensions.sync.bootstrap import BootstrapReport
+
+    h = Path(home) if home is not None else Path(os.path.expanduser("~"))
+    report = BootstrapReport()
+    report.stages.append(stage_gitignore(h))
+    report.stages.append(stage_shims(install_repo, h))
+    report.stages.append(stage_hooks(install_repo, h))
+    report.stages.append(stage_cli_shim(install_repo, h, env))
+    return report
