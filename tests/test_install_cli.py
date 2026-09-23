@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_extensions.install.machine import bootstrap
 from agent_extensions.install.update import cmd_update
 
 
@@ -73,3 +74,12 @@ def test_status_reports_stage_names(tmp_path, home, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert rc == 0
     assert "gitignore" in out and "shims" in out
+
+
+def test_bootstrap_runs_machine_stages_then_sync(tmp_path, home):
+    from agent_extensions.install.machine import bootstrap
+    r = bootstrap(_repo(), home=home)
+    names = [s.name for s in r.stages]
+    assert names[:4] == ["gitignore", "shims", "hooks", "cli-shim"]
+    assert "detect" in names and "read-back" in names
+    assert r.ok(), [(s.name, s.status, s.detail) for s in r.stages if s.status == "failed"]

@@ -204,3 +204,21 @@ def test_cli_shim_idempotent_mtime(home):
     r = stage_cli_shim(_repo(), home)
     assert "up to date" in r.detail
     assert (home / "bin" / "ae").stat().st_mtime_ns == t
+
+
+def test_hooks_converge_stale_our_entries(home):
+    """Our entries converge to one at the current install path (self-healing)."""
+    p = home / ".claude" / "settings.json"
+    p.parent.mkdir(parents=True)
+    stale = "python \"C:/somewhere-else/agent_extensions/continuity/adapters/claude_hook.py\""
+    p.write_text(json.dumps({"hooks": {"SessionStart": [
+        {"hooks": [{"type": "command", "command": stale}]},
+        {"hooks": [{"type": "command", "command": stale}]},  # duplicate
+    ]}}), encoding="utf-8")
+    r = stage_hooks(_repo(), home)
+    assert r.status == "applied"
+    data = json.loads(p.read_text(encoding="utf-8"))
+    entries = data["hooks"]["SessionStart"]
+    ours = [e for e in entries if any("claude_hook.py" in h.get("command", "") for h in e.get("hooks", []))]
+    assert len(ours) == 1
+    assert Path(_repo()).as_posix() in ours[0]["hooks"][0]["command"]

@@ -89,9 +89,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     home = Path(os.path.expanduser("~"))
+    here = Path(__file__).resolve()
     install_repo = Path(
         os.environ.get("AGENT_EXTENSIONS_DIR")
-        or (Path(__file__).resolve().parents[3] if (Path(__file__).resolve().parents[3] / "agent_extensions").exists() else home / ".agent-extensions")
+        or next((p for p in here.parents if (p / "agent_extensions" / "install").exists()), home / ".agent-extensions")
     )
 
     if args.cmd == "status":
@@ -105,12 +106,11 @@ def main(argv: list[str] | None = None) -> int:
         from agent_extensions.install.machine import bootstrap
 
         report = bootstrap(install_repo, home=home)
-    else:  # init — implemented in Task 5
-        from agent_extensions.sync.bootstrap import BootstrapReport, StageResult
+    else:  # init — forceful repo-mode injection
+        from agent_extensions.install.repo import init
 
-        report = BootstrapReport(
-            stages=[StageResult(name="init", status="failed", detail="not implemented yet (Task 5)")]
-        )
+        target = Path(args.repo) if args.repo else Path.cwd()
+        report = init(target, install_repo=install_repo, home=home)
     _print_report(report)
     return 0 if report.ok() else 1
 

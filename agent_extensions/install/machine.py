@@ -193,6 +193,34 @@ def _hook_entry(command: str) -> dict:
     return {"hooks": [{"type": "command", "command": command}]}
 
 
+def _converge_our_entries(entries: list, command: str, needle: str) -> tuple[list, bool]:
+    """Return (entries, changed) with exactly one entry running our hook
+    (needle found in a command = ours by content), pointed at the current
+    install path. Foreign entries are preserved untouched; stale/duplicate
+    ours entries collapse into one."""
+    result: list = []
+    ours_done = False
+    changed = False
+    for e in entries:
+        cmds = [str(h.get("command", "")) for h in (e.get("hooks") or []) if isinstance(h, dict)]
+        if any(needle in c for c in cmds):
+            if ours_done:
+                changed = True
+                continue  # duplicate ours from another run/checkout -> drop
+            ours_done = True
+            if command not in cmds:
+                result.append({"hooks": [{"type": "command", "command": command}]})
+                changed = True
+            else:
+                result.append(e)
+            continue
+        result.append(e)
+    if not ours_done:
+        result.append({"hooks": [{"type": "command", "command": command}]})
+        changed = True
+    return result, changed
+
+
 def stage_hooks(
     install_repo: Path,
     home: Path,
@@ -227,12 +255,11 @@ def stage_hooks(
             if not isinstance(entries, list):
                 hooks[event] = []
                 changed_claude = True
-            if not any(
-                isinstance(h, dict) and claude_cmd in str(h.get("command", ""))
-                for e in hooks[event]
-                for h in (e.get("hooks") or [])
-            ):
-                hooks[event].append(_hook_entry(claude_cmd))
+            new_entries, conv_changed = _converge_our_entries(
+                hooks[event], claude_cmd, "claude_hook.py"
+            )
+            if conv_changed:
+                hooks[event] = new_entries
                 changed_claude = True
         if changed_claude:
             if current is not None and backup_root is not None:
@@ -257,8 +284,9 @@ def stage_hooks(
             exts = []
             pi_data["extensions"] = exts
             changed_pi = True
-        if ext_abs not in exts:
-            exts.append(ext_abs)
+        ours = [x for x in exts if isinstance(x, str) and "pi-extension.ts" in x]
+        if ours != [ext_abs]:
+            pi_data["extensions"] = [x for x in exts if not (isinstance(x, str) and "pi-extension.ts" in x)] + [ext_abs]
             changed_pi = True
         if changed_pi:
             if pi_current is not None and backup_root is not None:
@@ -328,7 +356,7 @@ def stage_cli_shim(install_repo: Path, home: Path, env: dict | None = None) -> S
 def bootstrap(install_repo: Path, home: Path | None = None, env: dict | None = None):
     """Machine bootstrap: gitignore → shims → hooks → cli-shim, then the
     capability-bundle sync stages delegated (never duplicated)."""
-    from agent_extensions.sync.bootstrap import BootstrapReport
+    from agent_extensions.sync.bootstrap import BootstrapReport, bootstrap as sync_bootstrap
 
     h = Path(home) if home is not None else Path(os.path.expanduser("~"))
     report = BootstrapReport()
@@ -336,4 +364,5 @@ def bootstrap(install_repo: Path, home: Path | None = None, env: dict | None = N
     report.stages.append(stage_shims(install_repo, h))
     report.stages.append(stage_hooks(install_repo, h))
     report.stages.append(stage_cli_shim(install_repo, h, env))
+    report.stages.extend(sync_bootstrap(install_repo, home=h).stages)
     return report

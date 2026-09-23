@@ -83,12 +83,10 @@ def stage_bindings(repo: Path, install_repo: Path, home: Path, backup_root: Path
             if not isinstance(entries, list):
                 hooks[event] = []
                 changed = True
-            if not any(
-                isinstance(h, dict) and cmd in str(h.get("command", ""))
-                for e in hooks[event]
-                for h in (e.get("hooks") or [])
-            ):
-                hooks[event].append(machine_mod._hook_entry(cmd))
+            needle = "guards.py" if event == "PreToolUse" else "claude_hook.py"
+            new_entries, conv_changed = machine_mod._converge_our_entries(hooks[event], cmd, needle)
+            if conv_changed:
+                hooks[event] = new_entries
                 changed = True
         if changed:
             if current_text is not None and backup_root is not None:
