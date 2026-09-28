@@ -54,3 +54,14 @@ resolved SHA is written back into `bootstrap/external-marketplaces.json` as
 
 See `docs/superpowers/specs/2026-08-20-agent-extensions-design.md` for the
 full design rationale.
+
+## Instruction files (Issue #50)
+
+`AGENTS.md` (this file) is the single canonical instruction file every
+harness reads. There is no root `CLAUDE.md` — Claude Code >= 2.1.277 reads
+`AGENTS.md` natively, so the pointer was deleted (#48). `GEMINI.md` is a
+thin `@./AGENTS.md` import, retained solely because the owner's
+Antigravity has no native `AGENTS.md` read configured (no `contextFileName`
+in `~/.gemini/settings.json`); deleting it risks a harness silently losing
+instructions. Never duplicate instruction content across files — pointers
+import, they do not restate.
