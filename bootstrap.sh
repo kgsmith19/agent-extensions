@@ -20,7 +20,13 @@ set -euo pipefail
 REPO_URL="${AGENT_EXTENSIONS_REPO_URL:-https://github.com/kgsmith19/agent-extensions.git}"
 INSTALL_DIR="${AGENT_EXTENSIONS_DIR:-$HOME/.agent-extensions}"
 
-self_dir="$(dirname "${BASH_SOURCE[0]}")"
+# `curl ... | bash` feeds this script on stdin, where BASH_SOURCE is unset;
+# `set -u` would abort on the expansion. Fall back to the working directory so
+# the checkout probe below just misses and the clone/update path runs.
+self_dir="."
+if [ -n "${BASH_SOURCE[0]:-}" ]; then
+  self_dir="$(dirname "${BASH_SOURCE[0]}")"
+fi
 if [ -f "$self_dir/agent_extensions/install/__main__.py" ]; then
   # Running from within an existing checkout — use it directly, no clone.
   if command -v python3 >/dev/null 2>&1; then
