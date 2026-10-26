@@ -41,7 +41,7 @@ def test_license_metadata_preserves_existing_pins():
             "source_commit": "abc123def456789abc123def456789abc12345",
         }
     ]
-    
+
     # Conversion should preserve all data
     metadata = LicenseMetadata(
         semantic_id=old_entries[0]["semantic_id"],
@@ -51,7 +51,7 @@ def test_license_metadata_preserves_existing_pins():
             source_commit=old_entries[0]["source_commit"],
         ),
     )
-    
+
     assert metadata.semantic_id == old_entries[0]["semantic_id"]
     assert metadata.provenance.source_commit == old_entries[0]["source_commit"]
     assert metadata.provenance.source_url == old_entries[0]["source_url"]
