@@ -60,6 +60,13 @@ code preserved: 3 means the queue is empty, 5 means std could not be reached.
 | Kilo | `pwsh -NoProfile -File ~/.agent-extensions/bootstrap/session-start.ps1` (or the sh script) as the first command of the session. |
 | Plain shell / any other harness | Run either script, or `ae queue brief`, before starting work. |
 
+Claims are guarded in the harness too: `ae bootstrap` registers
+`agent_extensions/queue_hook.py` as a Claude Code `PreToolUse` hook (matcher
+`mcp__github__create_branch|Bash`). Creating an `issue/<n>-<slug>` branch,
+the claim protocol's atomic step, is blocked (exit 2, with the reason) unless
+`work_queue.py guard --claim` accepts that Issue. It is also blocked when the
+queue cannot be read. Every other tool call passes without a network call.
+
 Where std's CLI comes from: a local agent-engineering-standard checkout when
 `AES_STANDARD_DIR` points at it, otherwise every queue module is fetched from
 `AE_QUEUE_BASE_URL` (default: std `main` on raw.githubusercontent.com) into a
