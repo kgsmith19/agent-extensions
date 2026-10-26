@@ -30,6 +30,10 @@ def _commit(repo: Path, msg: str) -> None:
 def _upstream(tmp_path: Path) -> Path:
     up = tmp_path / "upstream"
     subprocess.run(["git", "clone", "-q", str(_repo()), str(up)], check=True)
+    # The source checkout may be detached with no branches (CI's shallow
+    # actions/checkout); give the fixture upstream a real branch so clones
+    # of it track one, as a GitHub clone of agent-extensions always does.
+    subprocess.run(["git", "-C", str(up), "checkout", "-q", "-B", "main"], check=True)
     subprocess.run(["git", "-C", str(up), "config", "user.email", "a@b"], check=True)
     subprocess.run(["git", "-C", str(up), "config", "user.name", "t"], check=True)
     return up

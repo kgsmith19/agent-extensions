@@ -182,3 +182,19 @@ def test_gate_needs_every_job_and_expects_exactly_those():
     needs = set(re.search(r"needs: \[([^\]]*)\]", jobs_block).group(1).replace(" ", "").split(","))
     expected = set(re.search(r"EXPECTED_JOBS: (.+)", jobs_block).group(1).split())
     assert jobs == needs == expected, (jobs, needs, expected)
+
+
+def test_whitespace_exemptions_cover_exactly_the_vendored_skills():
+    """Only upstream-pinned skills may skip whitespace checks; owned code may not."""
+    declared = set()
+    for vendored in (ROOT / "plugins").glob("*/skills/VENDORED-FROM"):
+        for row in vendored.read_text().splitlines():
+            if row.strip():
+                declared.add("%s/%s/**" % (vendored.parent.relative_to(ROOT).as_posix(),
+                                           row.split()[0]))
+    exempt = {
+        line.split()[0]
+        for line in (ROOT / ".gitattributes").read_text().splitlines()
+        if line.strip() and not line.startswith("#") and "-whitespace" in line
+    }
+    assert exempt == declared
