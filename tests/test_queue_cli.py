@@ -1,4 +1,4 @@
-"""agent_extensions/queue.py (#72, Queue v2 phase 3 / std#286): brief + forwarding.
+"""agent_extensions/queue_cli.py (#72, Queue v2 phase 3 / std#286): brief + forwarding.
 
 Black-box through subprocesses, against a stub of std's queue CLI with the
 same layout (work_queue.py importing its siblings from its own directory).
@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-QUEUE = ROOT / "agent_extensions" / "queue.py"
+QUEUE = ROOT / "agent_extensions" / "queue_cli.py"
 
 STUB = r'''
 import os, sys
@@ -27,7 +27,8 @@ if log:
 args = sys.argv[1:]
 code = int(os.environ.get("STUB_EXIT_" + "_".join(args).upper(), "0"))
 if code not in (0, 3):
-    sys.exit("stub failure for " + " ".join(args))
+    sys.stderr.write("stub failure for " + " ".join(args) + "\n")
+    sys.exit(code)
 if args == ["next"]:
     print("QUEUE EMPTY" if code == 3 else "Q99 [active] stub head — o/r#1\n    stub note")
 elif args == ["show"]:
@@ -160,7 +161,7 @@ def test_ae_queue_subcommand_forwards(tmp_path, fetched):
 
 
 def test_queue_module_is_stdlib_only():
-    """AC1: queue.py runs under `python3 -I` straight from a checkout, so it may import only the stdlib."""
+    """AC1: queue_cli.py runs under `python3 -I` straight from a checkout, so it may import only the stdlib."""
     import ast
     tree = ast.parse(QUEUE.read_text(encoding="utf-8"))
     names = {alias.name.split(".")[0] for node in ast.walk(tree)

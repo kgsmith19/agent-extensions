@@ -8,12 +8,14 @@
 #                 layer is absent (~/.agents/skills empty or ~/bin/<ae> missing)
 # 2. path       — append `export PATH="$HOME/bin:$PATH"` to FILE once, so the
 #                 harness exports it for the rest of the session
-# 3. queue      — print the owner's execution-queue head (binding order)
+# 3. queue      — print the owner's execution queue: active item, next item
+#                 and handoff (agent_extensions/queue_cli.py brief)
 #
 # Every step reports ok / present / skipped / degraded and the script always
 # exits 0: a missing network or tool degrades the session, never blocks it.
 # Overrides (used by tests): AE_SESSION_PROVISION_CMD, AE_QUEUE_CMD,
-# AE_QUEUE_BASE_URL (where the queue modules are fetched from).
+# AE_QUEUE_BASE_URL (where queue_cli.py fetches std's queue modules from).
+# PowerShell twin: bootstrap/session-start.ps1.
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -25,26 +27,11 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-QUEUE_BASE_URL="${AE_QUEUE_BASE_URL:-https://raw.githubusercontent.com/kgsmith19/agent-engineering-standard/main/tools}"
-# Every module std's queue CLI imports (queue v2, std#283); the CLI loads
-# its siblings from its own directory, so they are fetched side by side.
-QUEUE_MODULES="queue_core.py queue_store.py work_queue.py"
-
 default_queue_cmd() {
-  # Prefer a local standard checkout; otherwise fetch the tool from main.
-  local local_tool="${AES_STANDARD_DIR:-}/tools/work_queue.py"
-  if [ -n "${AES_STANDARD_DIR:-}" ] && [ -f "$local_tool" ]; then
-    python3 -I "$local_tool" next
-    return
-  fi
-  local tmp module rc=0
-  tmp="$(mktemp -d)" || return 1
-  for module in $QUEUE_MODULES; do
-    curl -fsSL --max-time 20 -o "$tmp/$module" "$QUEUE_BASE_URL/$module" || { rc=$?; break; }
-  done
-  [ $rc -eq 0 ] && { python3 -I "$tmp/work_queue.py" next; rc=$?; }
-  rm -rf "$tmp"
-  return $rc
+  # agent_extensions/queue_cli.py finds std's queue CLI (a local
+  # $AES_STANDARD_DIR checkout, else every module fetched from
+  # $AE_QUEUE_BASE_URL) and prints the brief: active, next, handoff.
+  python3 -I "$REPO_ROOT/agent_extensions/queue_cli.py" brief
 }
 
 # 1. provision ---------------------------------------------------------------

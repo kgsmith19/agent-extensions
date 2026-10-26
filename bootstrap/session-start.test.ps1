@@ -91,7 +91,7 @@ elif args == ["handoff", "show"]:
 "OK = True" | Set-Content -Path (Join-Path $stub "queue_core.py")
 "OK = True" | Set-Content -Path (Join-Path $stub "queue_store.py")
 Reset-Home
-$r = Invoke-SessionStart @{ AE_SESSION_PROVISION_CMD = "exit 0"; AE_QUEUE_BASE_URL = ([System.Uri]$stub).AbsoluteUri }
+$r = Invoke-SessionStart @{ AE_SESSION_PROVISION_CMD = "exit 0"; AE_QUEUE_BASE_URL = "file://" + $stub.Replace("\", "/") }
 foreach ($want in @("Active item:", "Next item:", "Q99 \[active\] stub head", "Handoff:", "STUB HANDOFF", "Resume with:")) {
     if ($r.Out -notmatch $want) { $failures += "brief missing '$want': $($r.Out)" }
 }

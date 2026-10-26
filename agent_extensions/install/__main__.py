@@ -89,7 +89,14 @@ def main(argv: list[str] | None = None) -> int:
     p_init = sub.add_parser("init", help="forceful repo-mode injection (gitignored)")
     p_init.add_argument("repo", nargs="?", default=None, help="target repo (default: cwd)")
     sub.add_parser("status", help="read-only machine state report")
+    p_queue = sub.add_parser("queue", help="the owner's execution queue: `brief`, or any std "
+                             "work_queue.py command (exit code preserved)")
+    p_queue.add_argument("args", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
+    if args.cmd == "queue":
+        from agent_extensions.queue_cli import main as queue_main
+
+        return queue_main(args.args)
 
     home = Path(os.path.expanduser("~"))
     here = Path(__file__).resolve()

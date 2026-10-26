@@ -33,3 +33,36 @@ Customize by editing templates/ or dropping fragments in AGENTS.local.d/.
 This also syncs Skills and MCP servers from the external marketplaces
 declared in `bootstrap/external-marketplaces.json` — see
 [AGENTS.md](./AGENTS.md#external-marketplaces).
+
+## Execution queue at every session start
+
+The owner's execution queue (agent-engineering-standard `tools/work_queue.py`,
+queue v2) says what to work on next. Every session should start by printing
+where it is in the queue: the **active item**, the **next item**, and the
+**handoff** (how to work it). Two equivalent entry points do this, with no model
+or provider dependency:
+
+    bash bootstrap/session-start.sh [--env-file FILE]   # POSIX sh
+    pwsh -File bootstrap/session-start.ps1 [-EnvFile FILE]   # PowerShell
+    ae queue brief                                       # just the queue part
+
+Each script provisions the capability layer only when it is missing, puts
+`~/bin` on PATH once, prints the queue brief, and always exits 0. A failure is
+reported as `degraded`, never hidden. `ae queue <args>` runs any std queue
+command (`next`, `show`, `history Q10`, `handoff show`, `move …`) with its exit
+code preserved: 3 means the queue is empty, 5 means std could not be reached.
+
+| Harness | How the brief runs at session start |
+| --- | --- |
+| Claude Code | `.claude/settings.json` `SessionStart` hook → `.claude/hooks/session-start.sh` → `bootstrap/session-start.sh` (already set up in the owner's three repos). |
+| Codex CLI | A `SessionStart` hook (Codex's hook vocabulary, see `bootstrap/hook-translate.test.sh`) whose command is `bash ~/.agent-extensions/bootstrap/session-start.sh`. |
+| Gemini CLI | A `SessionStart` hook where your version supports hooks; otherwise make `ae queue brief` the session's first command. |
+| Kilo | `pwsh -NoProfile -File ~/.agent-extensions/bootstrap/session-start.ps1` (or the sh script) as the first command of the session. |
+| Plain shell / any other harness | Run either script, or `ae queue brief`, before starting work. |
+
+Where std's CLI comes from: a local agent-engineering-standard checkout when
+`AES_STANDARD_DIR` points at it, otherwise every queue module is fetched from
+`AE_QUEUE_BASE_URL` (default: std `main` on raw.githubusercontent.com) into a
+temp dir, once per run. Queue writes record the harness and provider from
+`AES_QUEUE_HARNESS` / `AES_QUEUE_PROVIDER` when set; set them in harnesses std
+cannot detect, such as Kilo.
