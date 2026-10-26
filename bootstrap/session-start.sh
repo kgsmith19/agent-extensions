@@ -12,7 +12,8 @@
 #
 # Every step reports ok / present / skipped / degraded and the script always
 # exits 0: a missing network or tool degrades the session, never blocks it.
-# Overrides (used by tests): AE_SESSION_PROVISION_CMD, AE_QUEUE_CMD.
+# Overrides (used by tests): AE_SESSION_PROVISION_CMD, AE_QUEUE_CMD,
+# AE_QUEUE_BASE_URL (where the queue modules are fetched from).
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -24,7 +25,10 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-QUEUE_URL="https://raw.githubusercontent.com/kgsmith19/agent-engineering-standard/main/tools/work_queue.py"
+QUEUE_BASE_URL="${AE_QUEUE_BASE_URL:-https://raw.githubusercontent.com/kgsmith19/agent-engineering-standard/main/tools}"
+# Every module std's queue CLI imports (queue v2, std#283); the CLI loads
+# its siblings from its own directory, so they are fetched side by side.
+QUEUE_MODULES="queue_core.py queue_store.py work_queue.py"
 
 default_queue_cmd() {
   # Prefer a local standard checkout; otherwise fetch the tool from main.
@@ -33,11 +37,12 @@ default_queue_cmd() {
     python3 -I "$local_tool" next
     return
   fi
-  local tmp
+  local tmp module rc=0
   tmp="$(mktemp -d)" || return 1
-  curl -fsSL --max-time 20 -o "$tmp/work_queue.py" "$QUEUE_URL" \
-    && python3 -I "$tmp/work_queue.py" next
-  local rc=$?
+  for module in $QUEUE_MODULES; do
+    curl -fsSL --max-time 20 -o "$tmp/$module" "$QUEUE_BASE_URL/$module" || { rc=$?; break; }
+  done
+  [ $rc -eq 0 ] && { python3 -I "$tmp/work_queue.py" next; rc=$?; }
   rm -rf "$tmp"
   return $rc
 }

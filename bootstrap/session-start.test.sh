@@ -126,6 +126,15 @@ make_stub "$SCRATCH/stub-partial" queue_core
 fetch_run "file://$SCRATCH/stub-partial"
 [ "$CODE" = "0" ] || failures+=("#70 AC3: partial fetch changed exit code to $CODE")
 echo "$OUT" | grep -q "queue: degraded" || failures+=("#70 AC3: partial fetch did not degrade visibly: $OUT")
+echo "$OUT" | grep -q "ModuleNotFoundError" && failures+=("#70 AC3: a half-fetched queue CLI was run: $OUT")
+
+# #70 AC3: a fetched CLI that fails degrades visibly, exit stays 0
+fresh_home
+make_stub "$SCRATCH/stub-broken" queue_core queue_store
+echo 'raise SystemExit("queue unreachable")' > "$SCRATCH/stub-broken/queue_core.py"
+fetch_run "file://$SCRATCH/stub-broken"
+[ "$CODE" = "0" ] || failures+=("#70 AC3: failing fetched CLI changed exit code to $CODE")
+echo "$OUT" | grep -q "queue: degraded (exit 1: queue unreachable)" || failures+=("#70 AC3: failing fetched CLI not reported as degraded: $OUT")
 
 # #70: a local standard checkout is used as is (no fetch)
 fresh_home
