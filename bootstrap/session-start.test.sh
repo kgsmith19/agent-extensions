@@ -119,6 +119,10 @@ make_stub "$SCRATCH/stub-full" queue_core queue_store
 fetch_run "file://$SCRATCH/stub-full"
 [ "$CODE" = "0" ] || failures+=("#70 AC2: fetch path exit $CODE")
 echo "$OUT" | grep -q "Q99 \[pending\] stub head" || failures+=("#70 AC2: fetch path did not print the queue head: $OUT")
+# #72 AC2: the default queue command prints the brief: active, next, handoff
+for want in "Active item:" "Next item:" "Handoff:" "Resume with:"; do
+  echo "$OUT" | grep -qF "$want" || failures+=("#72 AC2: brief missing '$want': $OUT")
+done
 
 # #70 AC3: a missing module degrades visibly, exit stays 0
 fresh_home
