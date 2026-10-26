@@ -1,0 +1,10 @@
+# Vendored skills keep their upstream bytes (pinned in each plugin's
+# skills/VENDORED-FROM); whitespace checks apply to owned code only.
+# tests/test_ci_gate.py keeps this list equal to the VENDORED-FROM files.
+plugins/anthropic-product-skills/skills/canvas-design/** -whitespace
+plugins/anthropic-product-skills/skills/web-artifacts-builder/** -whitespace
+plugins/community-skills/skills/cli-demo-generator/** -whitespace
+plugins/community-skills/skills/deep-research/** -whitespace
+plugins/community-skills/skills/debugging-network-issues/** -whitespace
+plugins/general-skills/skills/skill-creator/** -whitespace
+plugins/superpowers-skills/skills/proving-it-works-with-a-movie/** -whitespace

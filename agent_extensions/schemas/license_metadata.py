@@ -23,10 +23,10 @@ COMMON_SPDX_LICENSES = {
 
 def validate_spdx_license(spdx_id: str) -> bool:
     """Check if a license ID is a valid SPDX identifier (simplified check).
-    
+
     Args:
         spdx_id: SPDX license identifier
-        
+
     Returns:
         True if valid SPDX license or composite license (contains "+")
     """
@@ -35,7 +35,7 @@ def validate_spdx_license(spdx_id: str) -> bool:
 
 class ProvenanceRecord(BaseModel):
     """Source and commit information for an extension.
-    
+
     Tracks exact source location and revision for reproducibility.
     """
     source_url: str = Field(..., description="Git repository URL")
@@ -53,7 +53,7 @@ class ProvenanceRecord(BaseModel):
 
 class LicenseMetadata(BaseModel):
     """License and provenance tracking for an extension.
-    
+
     Combines SPDX license compliance with exact source tracking.
     """
     semantic_id: str = Field(..., description="Semantic capability ID")

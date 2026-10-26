@@ -55,6 +55,23 @@ resolved SHA is written back into `bootstrap/external-marketplaces.json` as
 See `docs/superpowers/specs/2026-08-20-agent-extensions-design.md` for the
 full design rationale.
 
+## CI and the PR Gate (Issue #64)
+
+Every PR runs `.github/workflows/pr-gate.yml`; its aggregating
+`agent-extensions PR Gate` job is the only required check on `main` and
+passes only when every job concluded exactly `success` at the exact PR head.
+PRs come from `issue/<n>-<slug>` branches and carry `Closes #<n>`.
+Reproduce the Gate locally before pushing:
+
+    python -m pip install -r requirements-dev.txt   # pinned; incl. pydantic, ruff
+    python -m pytest -q                             # needs pwsh 7 on PATH
+    python .github/ci/script_tests.py sh
+    python .github/ci/script_tests.py ps1
+
+New `bootstrap/*.test.sh|ps1` scripts run automatically. A script that
+cannot run hermetically goes in `LIVE_ONLY` in `.github/ci/script_tests.py`
+with its reason — never silently skipped.
+
 ## Instruction files (Issue #50)
 
 `AGENTS.md` (this file) is the single canonical instruction file every
