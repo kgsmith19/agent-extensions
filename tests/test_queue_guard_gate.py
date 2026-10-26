@@ -60,6 +60,12 @@ def test_gate_reruns_when_the_exemption_label_changes():
 
 def test_policy_job_can_read_the_pr_timeline():
     """AC1: owner provenance of the label comes from the PR timeline, which needs issues: read."""
-    perms = WORKFLOW.split("\npermissions:", 1)[1].split("\n\n", 1)[0]
-    assert "issues: read" in perms
-    assert "write" not in perms
+    block = WORKFLOW.split("\npermissions:", 1)[1].split("\n\n", 1)[0]
+    perms = {}
+    for line in block.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if line:
+            key, _, value = line.partition(":")
+            perms[key.strip()] = value.strip()
+    assert perms.get("issues") == "read"
+    assert "write" not in perms.values()
