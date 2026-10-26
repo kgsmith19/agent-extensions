@@ -174,6 +174,10 @@ import json
 from datetime import datetime
 
 CLAUDE_HOOK_REL = "agent_extensions/continuity/adapters/claude_hook.py"
+# Claim guard (#77): blocks claiming an Issue that is not on the active or
+# next item of the owner's execution queue.
+QUEUE_HOOK_REL = "agent_extensions/queue_hook.py"
+QUEUE_HOOK_MATCHER = "mcp__github__create_branch|Bash"
 PI_EXTENSION_REL = "agent_extensions/continuity/adapters/pi-extension.ts"
 
 
@@ -233,13 +237,38 @@ def _converge_our_entries(entries: list, command: str, needle: str) -> tuple[lis
     return result, changed
 
 
+def _converge_matched_entry(entries: list, command: str, needle: str, matcher: str) -> tuple[list, bool]:
+    """Like _converge_our_entries, for an event whose entries carry a tool
+    matcher: exactly one entry of ours (needle in a command), with this
+    matcher and command; foreign entries untouched."""
+    wanted = {"matcher": matcher, "hooks": [{"type": "command", "command": command}]}
+    result: list = []
+    placed = False
+    changed = False
+    for e in entries:
+        cmds = [str(h.get("command", "")) for h in (e.get("hooks") or []) if isinstance(h, dict)]
+        if any(needle in c for c in cmds):
+            if placed or e != wanted:
+                changed = True
+            if not placed:
+                result.append(wanted)
+                placed = True
+            continue
+        result.append(e)
+    if not placed:
+        result.append(wanted)
+        changed = True
+    return result, changed
+
+
 def stage_hooks(
     install_repo: Path,
     home: Path,
     backup_root: Path | None = None,
 ) -> StageResult:
     """Wire continuity adapters additively: Claude SessionStart/PreCompact
-    hooks and the pi extensions array. JSON merges never touch foreign keys;
+    hooks, the Claude PreToolUse claim guard (#77), and the pi extensions
+    array. JSON merges never touch foreign keys;
     a change is written only when something is actually missing (idempotent);
     corrupt JSON fails the stage naming the path; first write backs up."""
 
@@ -273,6 +302,14 @@ def stage_hooks(
             if conv_changed:
                 hooks[event] = new_entries
                 changed_claude = True
+        queue_cmd = "python \"" + (repo / QUEUE_HOOK_REL).as_posix() + "\""
+        pre = hooks.get("PreToolUse")
+        if not isinstance(pre, list):
+            pre = []
+            changed_claude = True
+        pre, conv_changed = _converge_matched_entry(pre, queue_cmd, "queue_hook.py", QUEUE_HOOK_MATCHER)
+        hooks["PreToolUse"] = pre
+        changed_claude = changed_claude or conv_changed
         if changed_claude:
             if current is not None and backup_root is not None:
                 backup(claude_path, backup_root)
