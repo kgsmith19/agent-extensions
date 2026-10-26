@@ -72,6 +72,16 @@ New `bootstrap/*.test.sh|ps1` scripts run automatically. A script that
 cannot run hermetically goes in `LIVE_ONLY` in `.github/ci/script_tests.py`
 with its reason — never silently skipped.
 
+## Session start (Issue #68)
+
+`bootstrap/session-start.sh` is the provider-neutral session start any
+harness can call: it provisions the capability layer only when absent,
+exports `~/bin` on PATH (`--env-file`), and prints the owner's execution
+queue head (binding order). It never fails a session. Claude Code cloud
+sessions run it through the thin adapter `.claude/hooks/session-start.sh`,
+which also installs this repo's pinned test deps (venv + pwsh 7.4.6,
+sha256-verified). Other harnesses wire the same script; do not fork it.
+
 ## Instruction files (Issue #50)
 
 `AGENTS.md` (this file) is the single canonical instruction file every
