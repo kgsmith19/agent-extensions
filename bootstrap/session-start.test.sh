@@ -84,6 +84,64 @@ set -e
 [ "$CODE" = "0" ] || failures+=("no env file: exit $CODE")
 echo "$OUT" | grep -q "path: skipped" || failures+=("no env file: missing 'path: skipped': $OUT")
 
+# #70: the real fetch path (no AE_QUEUE_CMD) downloads every queue module.
+# The stub mirrors std's layout: work_queue.py imports its sibling modules
+# from its own directory, as std's CLI does under `python3 -I`.
+make_stub() {
+  # make_stub <dir> <module>...: a work_queue.py plus the named siblings
+  local dir="$1"; shift
+  mkdir -p "$dir"
+  printf '%s\n' 'import os, sys' \
+    'sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))' \
+    'import queue_core, queue_store' \
+    'print(queue_core.HEAD)' > "$dir/work_queue.py"
+  for module in "$@"; do
+    case "$module" in
+      queue_core) echo 'HEAD = "Q99 [pending] stub head"' > "$dir/queue_core.py" ;;
+      queue_store) echo 'OK = True' > "$dir/queue_store.py" ;;
+    esac
+  done
+}
+fetch_run() {
+  # fetch_run <base-url> [extra env...]: the default queue command, no override
+  local base="$1"; shift
+  set +e
+  OUT="$(env -u AE_QUEUE_CMD -u AES_STANDARD_DIR HOME="$SCRATCH/home" \
+    AE_SESSION_PROVISION_CMD="true" AE_QUEUE_BASE_URL="$base" "$@" \
+    bash "$SCRIPT" 2>&1)"
+  CODE=$?
+  set -e
+}
+
+# #70 AC1/AC2: fetched modules run together and print the head
+fresh_home
+make_stub "$SCRATCH/stub-full" queue_core queue_store
+fetch_run "file://$SCRATCH/stub-full"
+[ "$CODE" = "0" ] || failures+=("#70 AC2: fetch path exit $CODE")
+echo "$OUT" | grep -q "Q99 \[pending\] stub head" || failures+=("#70 AC2: fetch path did not print the queue head: $OUT")
+
+# #70 AC3: a missing module degrades visibly, exit stays 0
+fresh_home
+make_stub "$SCRATCH/stub-partial" queue_core
+fetch_run "file://$SCRATCH/stub-partial"
+[ "$CODE" = "0" ] || failures+=("#70 AC3: partial fetch changed exit code to $CODE")
+echo "$OUT" | grep -q "queue: degraded" || failures+=("#70 AC3: partial fetch did not degrade visibly: $OUT")
+echo "$OUT" | grep -q "ModuleNotFoundError" && failures+=("#70 AC3: a half-fetched queue CLI was run: $OUT")
+
+# #70 AC3: a fetched CLI that fails degrades visibly, exit stays 0
+fresh_home
+make_stub "$SCRATCH/stub-broken" queue_core queue_store
+echo 'raise SystemExit("queue unreachable")' > "$SCRATCH/stub-broken/queue_core.py"
+fetch_run "file://$SCRATCH/stub-broken"
+[ "$CODE" = "0" ] || failures+=("#70 AC3: failing fetched CLI changed exit code to $CODE")
+echo "$OUT" | grep -q "queue: degraded (exit 1: queue unreachable)" || failures+=("#70 AC3: failing fetched CLI not reported as degraded: $OUT")
+
+# #70: a local standard checkout is used as is (no fetch)
+fresh_home
+make_stub "$SCRATCH/std/tools" queue_core queue_store
+fetch_run "file://$SCRATCH/nowhere" AES_STANDARD_DIR="$SCRATCH/std"
+echo "$OUT" | grep -q "Q99 \[pending\] stub head" || failures+=("#70: local AES_STANDARD_DIR checkout not used: $OUT")
+
 if [ ${#failures[@]} -gt 0 ]; then
   printf 'FAIL: %s\n' "${failures[@]}"
   exit 1
