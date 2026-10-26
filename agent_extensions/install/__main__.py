@@ -70,7 +70,10 @@ def _probe_status(install_repo: Path, home: Path) -> str:
     name = os.environ.get("AE_COMMAND", "ae")
     launcher = home / "bin" / name
     if launcher.exists() and MANAGED_SH_MARKER in launcher.read_text(encoding="utf-8"):
-        lines.append(f"applied  cli-shim: {launcher}")
+        if os.name != "nt" and not os.access(launcher, os.X_OK):
+            lines.append(f"drifted  cli-shim: {launcher} not executable (re-run bootstrap)")
+        else:
+            lines.append(f"applied  cli-shim: {launcher}")
     elif launcher.exists():
         lines.append(f"unmanaged cli-shim: {launcher}")
     else:

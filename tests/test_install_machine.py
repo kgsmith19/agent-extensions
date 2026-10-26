@@ -296,3 +296,71 @@ def test_cli_shim_recognizes_cmd_comment_marker(home):
     r = stage_cli_shim(_repo(), home)
     assert r.status == "applied"
     assert "ae.cmd: updated" in r.detail  # ours -> converge; NOT "unmanaged"
+
+
+# ---- #66: POSIX launcher is executable, self-heals, honours AE_COMMAND ----
+import stat
+import subprocess
+import sys
+
+posix_only = pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
+
+
+def _mode(p: Path) -> int:
+    return stat.S_IMODE(p.stat().st_mode)
+
+
+@posix_only
+def test_cli_shim_posix_launcher_is_executable_and_runs(home):
+    """AC1: a fresh install yields a launcher that runs by path, not 'Permission denied'."""
+    stage_cli_shim(_repo(), home, env={})
+    launcher = home / "bin" / "ae"
+    assert _mode(launcher) == 0o755
+    proc = subprocess.run([str(launcher), "--help"], capture_output=True, text=True,
+                          env={**os.environ, "PATH": os.path.dirname(sys.executable) + os.pathsep + os.environ["PATH"]})
+    assert proc.returncode == 0, proc.stderr
+
+
+@posix_only
+def test_cli_shim_repairs_mode_of_managed_up_to_date_launcher(home):
+    """AC2: installs broken by earlier versions self-heal without a content rewrite."""
+    stage_cli_shim(_repo(), home, env={})
+    launcher = home / "bin" / "ae"
+    launcher.chmod(0o644)
+    before = launcher.stat().st_mtime_ns
+    r = stage_cli_shim(_repo(), home, env={})
+    assert _mode(launcher) == 0o755
+    assert launcher.stat().st_mtime_ns == before
+    assert "ae: mode repaired" in r.detail
+
+
+def test_cli_shim_posix_launcher_honours_ae_command(home):
+    """AC3: the spec renders ~/bin/<AE_COMMAND|ae>; the bash launcher must follow it."""
+    stage_cli_shim(_repo(), home, env={"AE_COMMAND": "agx"})
+    assert (home / "bin" / "agx").exists()
+    assert (home / "bin" / "agx.cmd").exists()
+    assert not (home / "bin" / "ae").exists()
+
+
+@posix_only
+def test_cli_shim_never_changes_mode_of_unmanaged_file(home):
+    """AC4: an unmanaged file keeps its bytes and its mode."""
+    (home / "bin").mkdir(parents=True)
+    mine = home / "bin" / "ae"
+    mine.write_text("#!/bin/sh\necho mine\n", encoding="utf-8")
+    mine.chmod(0o644)
+    stage_cli_shim(_repo(), home, env={})
+    assert _mode(mine) == 0o644
+    assert mine.read_text(encoding="utf-8") == "#!/bin/sh\necho mine\n"
+
+
+@posix_only
+def test_status_reports_non_executable_launcher_as_drifted(home):
+    """`ae status` must not report a launcher that cannot run as applied."""
+    from agent_extensions.install.__main__ import _probe_status
+
+    stage_cli_shim(_repo(), home, env={})
+    assert "applied  cli-shim" in _probe_status(_repo(), home)
+    (home / "bin" / "ae").chmod(0o644)
+    assert "drifted  cli-shim" in _probe_status(_repo(), home)
+    assert "not executable" in _probe_status(_repo(), home)

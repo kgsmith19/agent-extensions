@@ -124,6 +124,18 @@ def _write_text(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8", newline="\n")
 
 
+def _ensure_executable(path: Path) -> bool:
+    """Give a POSIX launcher mode 0o755; True when the mode had to change.
+    A no-op on Windows, where execute bits do not exist."""
+    if os.name == "nt":
+        return False
+    mode = path.stat().st_mode & 0o777
+    if mode == 0o755:
+        return False
+    path.chmod(0o755)
+    return True
+
+
 def stage_shims(repo_root: Path, home: Path) -> StageResult:
     """Marker-guarded shim install: unmarked existing files are skipped loudly
     (never clobbered); marked files converge to the template; absent targets
@@ -391,7 +403,7 @@ def stage_cli_shim(install_repo: Path, home: Path, env: dict | None = None) -> S
                 return f"skipped (cannot create {bin_dir}: {exc})"
         notes: list[str] = []
         install_abs = Path(install_repo).resolve().as_posix()
-        specs = [("ae", "ae-launcher.sh"), (name + ".cmd", "ae-launcher.cmd"), (name + ".ps1", "ae-launcher.ps1")]
+        specs = [(name, "ae-launcher.sh"), (name + ".cmd", "ae-launcher.cmd"), (name + ".ps1", "ae-launcher.ps1")]
         for target_name, template_name in specs:
             rendered = render_template(install_repo, template_name).replace("{{INSTALL_DIR}}", install_abs)
             target = bin_dir / target_name
@@ -403,13 +415,16 @@ def stage_cli_shim(install_repo: Path, home: Path, env: dict | None = None) -> S
                     notes.append(f"{target_name}: skipped (unmanaged file present: {target})")
                     continue
                 if current == rendered:
-                    notes.append(f"{target_name}: up to date")
+                    note = f"{target_name}: up to date"
                 else:
                     _write_text(target, rendered)
-                    notes.append(f"{target_name}: updated")
+                    note = f"{target_name}: updated"
             else:
                 _write_text(target, rendered)
-                notes.append(f"{target_name}: installed")
+                note = f"{target_name}: installed"
+            if template_name == "ae-launcher.sh" and _ensure_executable(target):
+                note = f"{target_name}: mode repaired" if note.endswith("up to date") else note
+            notes.append(note)
         posix_path_note = f"NOTE: {bin_dir} not on PATH — add: export PATH=\"{bin_dir}:$PATH\""
         if os.name == "nt":
             try:
