@@ -84,7 +84,13 @@ def _probe_status(install_repo: Path, home: Path) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="ae", description="agent-extensions installer (issue #53)")
     sub = parser.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("bootstrap", help="install machine stages + capability bundle (idempotent)")
+    p_boot = sub.add_parser("bootstrap", help="install machine stages + capability bundle (idempotent)")
+    p_boot.add_argument(
+        "--seed",
+        default=None,
+        help="machine-identity seed file (INFISICAL_CLIENT_ID/SECRET/PROJECT_ID lines); "
+        "materializes the AGENT_* instruction bundle (default: the INFISICAL_* environment, if set)",
+    )
     sub.add_parser("update", help="ensure latest checkout, then converge (idempotent)")
     p_init = sub.add_parser("init", help="forceful repo-mode injection (gitignored)")
     p_init.add_argument("repo", nargs="?", default=None, help="target repo (default: cwd)")
@@ -113,9 +119,10 @@ def main(argv: list[str] | None = None) -> int:
 
         report = cmd_update(home=home, install_repo=install_repo)
     elif args.cmd == "bootstrap":
-        from agent_extensions.install.machine import bootstrap
+        from agent_extensions.install import machine
 
-        report = bootstrap(install_repo, home=home)
+        seed = Path(args.seed).expanduser() if args.seed else None
+        report = machine.bootstrap(install_repo, home=home, seed=seed)
     else:  # init — forceful repo-mode injection
         from agent_extensions.install.repo import init
 

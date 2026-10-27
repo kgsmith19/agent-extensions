@@ -296,3 +296,10 @@ def test_real_client_speaks_the_infisical_api_and_redacts(monkeypatch):
     with pytest.raises(b.ProviderError) as exc:
         client.login("cid", "s3cret")
     assert "401" in str(exc.value) and "s3cret" not in str(exc.value)
+
+
+def test_an_error_that_echoes_the_seed_secret_is_redacted(home, seed):
+    """A provider error whose text contains the client secret is redacted before it reaches the report."""
+    result, _ = _run(home, seed, client=FakeClient(error=RuntimeError("login refused for sec-ret-value")))
+    assert result.status == "failed"
+    assert "sec-ret-value" not in result.detail and "[redacted]" in result.detail
