@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-extensions:schema:capability_manifest_v1",
+  "title": "Canonical capability manifest v1",
+  "description": "Provider-neutral capability set. Additive-only within v1: new optional properties and enum values may be added; nothing is removed, renamed, or made required.",
+  "type": "object",
+  "required": ["version", "capabilities"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "pattern": "^1\\.[0-9]+\\.[0-9]+$"
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/capability"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "capability": {
+      "type": "object",
+      "required": ["id", "kind", "source"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^capability\\.[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["skill", "plugin", "agent", "command", "hook", "mcp", "connector"]
+        },
+        "source": {
+          "type": "string",
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._][A-Za-z0-9._/-]*$"
+        },
+        "transport": {
+          "type": "string",
+          "enum": ["stdio", "http", "sse"]
+        }
+      },
+      "additionalProperties": false,
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "mcp"
+          }
+        },
+        "required": ["kind"]
+      },
+      "else": {
+        "not": {
+          "required": ["transport"]
+        }
+      }
+    }
+  }
+}
