@@ -20,8 +20,9 @@ run() {
   # run <env-file> [extra env...]; captures stdout+stderr and exit code
   local envfile="$1"; shift
   set +e
-  OUT="$(env HOME="$SCRATCH/home" \
+  OUT="$(env -u INFISICAL_CLIENT_ID -u INFISICAL_CLIENT_SECRET -u INFISICAL_PROJECT_ID HOME="$SCRATCH/home" \
     AE_SESSION_PROVISION_CMD="echo provision >> '$SCRATCH/calls'" \
+    AE_SESSION_BUNDLE_CMD="${BUNDLE_CMD:-echo bundle >> '$SCRATCH/calls'; echo 'applied  bundle: AGENT_GLOBAL_RULES_MD: up to date'}" \
     AE_QUEUE_CMD="${QUEUE_CMD:-echo 'Q07 [pending] next thing'}" \
     "$@" bash "$SCRIPT" --env-file "$envfile" 2>&1)"
   CODE=$?
@@ -70,7 +71,7 @@ echo "$OUT" | grep -q "queue: degraded" || failures+=("AC3: missing 'queue: degr
 # AC4: failing provisioning degrades, exit stays 0
 fresh_home
 set +e
-OUT="$(env HOME="$SCRATCH/home" AE_SESSION_PROVISION_CMD="exit 7" AE_QUEUE_CMD="true" \
+OUT="$(env -u INFISICAL_CLIENT_ID -u INFISICAL_CLIENT_SECRET -u INFISICAL_PROJECT_ID HOME="$SCRATCH/home" AE_SESSION_PROVISION_CMD="exit 7" AE_QUEUE_CMD="true" \
   bash "$SCRIPT" --env-file "$SCRATCH/env7" 2>&1)"; CODE=$?
 set -e
 [ "$CODE" = "0" ] || failures+=("AC4: failing provisioning changed exit code to $CODE")
@@ -79,7 +80,7 @@ echo "$OUT" | grep -q "provision: degraded" || failures+=("AC4: missing 'provisi
 # No env file given: still succeeds, nothing written
 fresh_home
 set +e
-OUT="$(env HOME="$SCRATCH/home" AE_SESSION_PROVISION_CMD="true" AE_QUEUE_CMD="true" bash "$SCRIPT" 2>&1)"; CODE=$?
+OUT="$(env -u INFISICAL_CLIENT_ID -u INFISICAL_CLIENT_SECRET -u INFISICAL_PROJECT_ID HOME="$SCRATCH/home" AE_SESSION_PROVISION_CMD="true" AE_QUEUE_CMD="true" bash "$SCRIPT" 2>&1)"; CODE=$?
 set -e
 [ "$CODE" = "0" ] || failures+=("no env file: exit $CODE")
 echo "$OUT" | grep -q "path: skipped" || failures+=("no env file: missing 'path: skipped': $OUT")
@@ -106,7 +107,7 @@ fetch_run() {
   # fetch_run <base-url> [extra env...]: the default queue command, no override
   local base="$1"; shift
   set +e
-  OUT="$(env -u AE_QUEUE_CMD -u AES_STANDARD_DIR HOME="$SCRATCH/home" \
+  OUT="$(env -u AE_QUEUE_CMD -u AES_STANDARD_DIR -u INFISICAL_CLIENT_ID -u INFISICAL_CLIENT_SECRET -u INFISICAL_PROJECT_ID HOME="$SCRATCH/home" \
     AE_SESSION_PROVISION_CMD="true" AE_QUEUE_BASE_URL="$base" "$@" \
     bash "$SCRIPT" 2>&1)"
   CODE=$?
@@ -145,6 +146,31 @@ fresh_home
 make_stub "$SCRATCH/std/tools" queue_core queue_store
 fetch_run "file://$SCRATCH/nowhere" AES_STANDARD_DIR="$SCRATCH/std"
 echo "$OUT" | grep -q "Q99 \[pending\] stub head" || failures+=("#70: local AES_STANDARD_DIR checkout not used: $OUT")
+
+# #60: with the machine identity present, the bundle step runs once and reports ok
+IDENTITY=(INFISICAL_CLIENT_ID=cid INFISICAL_CLIENT_SECRET=s3cret-canary INFISICAL_PROJECT_ID=proj)
+fresh_home
+run "$SCRATCH/env8" "${IDENTITY[@]}"
+[ "$(grep -c '^bundle$' "$SCRATCH/calls" || true)" = "1" ] || failures+=("#60: identity present but the bundle step did not run exactly once")
+echo "$OUT" | grep -q "bundle: ok" || failures+=("#60: missing 'bundle: ok': $OUT")
+echo "$OUT" | grep -q "s3cret-canary" && failures+=("#60: the client secret leaked into session output: $OUT")
+
+# #60: without the identity the bundle step is skipped and never runs
+fresh_home
+run "$SCRATCH/env9"
+grep -q '^bundle$' "$SCRATCH/calls" && failures+=("#60: bundle step ran without an identity")
+echo "$OUT" | grep -q "bundle: skipped (no INFISICAL_\* identity in the environment)" || failures+=("#60: missing 'bundle: skipped': $OUT")
+
+# #60: a partial identity is no identity
+fresh_home
+run "$SCRATCH/env10" INFISICAL_CLIENT_ID=cid INFISICAL_CLIENT_SECRET=s3cret-canary
+grep -q '^bundle$' "$SCRATCH/calls" && failures+=("#60: bundle step ran with a partial identity")
+
+# #60: a failing bundle step degrades, exit stays 0
+fresh_home
+BUNDLE_CMD="echo 'failed   bundle: secret provider returned HTTP 401'; exit 1" run "$SCRATCH/env11" "${IDENTITY[@]}"
+[ "$CODE" = "0" ] || failures+=("#60: failing bundle step changed exit code to $CODE")
+echo "$OUT" | grep -q "bundle: degraded (exit 1: failed   bundle: secret provider returned HTTP 401)" || failures+=("#60: missing 'bundle: degraded': $OUT")
 
 if [ ${#failures[@]} -gt 0 ]; then
   printf 'FAIL: %s\n' "${failures[@]}"

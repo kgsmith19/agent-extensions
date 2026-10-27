@@ -12,6 +12,7 @@ import subprocess
 from pathlib import Path
 
 from agent_extensions import install
+from agent_extensions.install.bundle import stage_bundle
 from agent_extensions.sync.bootstrap import APPLIED, FAILED, SKIPPED, StageResult, _run_stage
 
 GIT = "git"
@@ -480,13 +481,20 @@ def stage_cli_shim(install_repo: Path, home: Path, env: dict | None = None) -> S
     return _run_stage("cli-shim", work, enabled=True)
 
 
-def bootstrap(install_repo: Path, home: Path | None = None, env: dict | None = None):
-    """Machine bootstrap: gitignore → shims → hooks → cli-shim, then the
-    capability-bundle sync stages delegated (never duplicated)."""
+def bootstrap(install_repo: Path, home: Path | None = None, env: dict | None = None, seed: Path | None = None):
+    """Machine bootstrap: bundle → gitignore → shims → hooks → cli-shim, then the
+    capability-bundle sync stages delegated (never duplicated).
+
+    The AGENT_* instruction bundle (issue #60) runs first, from the seed file
+    or the INFISICAL_* environment, so a fresh machine gets the owner's live
+    global rules before the baseline template would be written; the shim
+    stage then leaves that unmanaged file alone. Without an identity the
+    bundle stage is skipped and every other stage still runs."""
     from agent_extensions.sync.bootstrap import BootstrapReport, bootstrap as sync_bootstrap
 
     h = Path(home) if home is not None else Path(os.path.expanduser("~"))
     report = BootstrapReport()
+    report.stages.append(stage_bundle(h, seed_path=seed, env=env if env is not None else os.environ))
     report.stages.append(stage_gitignore(h))
     report.stages.append(stage_shims(install_repo, h))
     report.stages.append(stage_hooks(install_repo, h))
