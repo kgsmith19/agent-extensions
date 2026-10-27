@@ -30,6 +30,9 @@ from agent_extensions.install import MANAGED_MD_MARKER
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates" / "context"
 VENDORED_REL = "agent_extensions/install/templates/context"
+# std's adopter skeleton (std#306): placeholders, never a live context. Mirrors
+# standardctl.py CONTEXT_TEMPLATE_DIR; matched on the repo-relative manifest path.
+STD_TEMPLATE_PREFIX = "TEMPLATES/context/"
 MANIFEST = "context.yaml"
 AGENTS = "AGENTS.md"
 README = "README.md"
@@ -278,7 +281,7 @@ def scan_contexts(root: Path) -> Tuple[List[Dict[str, Any]], List[Finding]]:
     findings: List[Finding] = []
     for rel in _manifest_paths(root):
         folder = posixpath.dirname(rel) or "."
-        if _is_vendored(root, folder):
+        if rel.startswith(STD_TEMPLATE_PREFIX) or _is_vendored(root, folder):
             continue
         try:
             data = parse_restricted_yaml((root / rel).read_text(encoding="utf-8"), rel)
@@ -525,18 +528,64 @@ def _block(title: str, text: str) -> str:
     return "## %s\n%s" % (title, body)
 
 
-def brief_pack(root: Path, folder: str) -> Tuple[str, List[str]]:
-    """Deterministic pack for one context. Returns (pack, problems); the pack is
-    empty whenever problems is non-empty. Dependencies contribute public paths
-    only, never their contents."""
+def _closure(by_name: Dict[str, Dict[str, Any]], start: str) -> List[Dict[str, Any]]:
+    """The context named start plus its transitive depends_on closure."""
+    seen: List[str] = []
+    stack = [start]
+    while stack:
+        name = stack.pop()
+        if name in seen or name not in by_name:
+            continue
+        seen.append(name)
+        stack.extend(by_name[name]["depends_on"])
+    return [by_name[name] for name in seen]
+
+
+def _owned_by(path: str, folders: set) -> bool:
+    """True when path is a folder's own file or lies under one (folder "." owns all)."""
+    return any(f == "." or path == f or path.startswith(f + "/") for f in folders)
+
+
+def _relevant(finding: Finding, folders: set, manifests: set, names: set) -> bool:
+    """A finding blocks a brief when it touches the closure: a file the closure
+    owns, or a tree-level finding (duplicate, cycle, nesting, unknown edge) that
+    names a closure member."""
+    if finding.path in manifests or _owned_by(finding.path, folders):
+        return True
+    tokens = set(re.findall(r"'([^']+)'", finding.message))
+    prefix = "dependency cycle: "
+    if finding.message.startswith(prefix):
+        tokens.update(finding.message[len(prefix):].split(" -> "))
+    return bool(tokens & names)
+
+
+def brief_pack(root: Path, folder: str) -> Tuple[str, List[str], List[str]]:
+    """Deterministic pack for one context: (pack, problems, warnings).
+
+    problems (non-empty means refuse, pack is empty) are findings that touch the
+    target or its transitive depends_on closure; other findings are warnings.
+    Dependencies contribute public paths only, never their contents.
+    """
     records, findings = check_contexts(root)
-    if findings:
-        return "", ["%s: %s" % (f.path, f.message) for f in findings]
     by_folder = {record["folder"]: record for record in records}
     by_name = {record["name"]: record for record in records}
-    if folder not in by_folder:
-        return "", ["%s: no bounded context here (needs %s)" % (folder, MANIFEST)]
-    record = by_folder[folder]
+    target = by_folder.get(folder)
+    closure = _closure(by_name, target["name"]) if target else []
+    folders = {folder} | {rec["folder"] for rec in closure}
+    manifests = {_join(folder, MANIFEST)} | {rec["manifest"] for rec in closure}
+    names = {rec["name"] for rec in closure}
+    problems: List[str] = []
+    warnings: List[str] = []
+    for finding in findings:
+        line = "%s: %s" % (finding.path, finding.message)
+        if _relevant(finding, folders, manifests, names):
+            problems.append(line)
+        else:
+            warnings.append(line)
+    if problems:
+        return "", problems, warnings
+    if target is None:
+        return "", ["%s: no bounded context here (needs %s)" % (folder, MANIFEST)], warnings
 
     def read(rel: str) -> str:
         return (root / rel).read_text(encoding="utf-8")
@@ -544,32 +593,32 @@ def brief_pack(root: Path, folder: str) -> Tuple[str, List[str]]:
     agents_rel = _join(folder, AGENTS)
     agents_text = read(agents_rel)
     sections = [
-        "# context pack: %s\n# folder: %s\n" % (record["name"], folder),
+        "# context pack: %s\n# folder: %s\n" % (target["name"], folder),
         _block(agents_rel, agents_text),
         _block(_join(folder, README), read(_join(folder, README))),
         _block(_join(folder, MANIFEST), read(_join(folder, MANIFEST))),
     ]
     dep_lines = []
-    for dep in record["depends_on"]:
+    for dep in target["depends_on"]:
         dep_record = by_name[dep]
         for public in dep_record["public"]:
             dep_lines.append("- %s: %s" % (dep, _join(dep_record["folder"], public)))
         if not dep_record["public"]:
             dep_lines.append("- %s: (no public paths)" % dep)
-    if not record["depends_on"]:
+    if not target["depends_on"]:
         dep_lines.append("(none)")
     sections.append(_block("dependencies (public paths only; contents not included)",
                            "\n".join(dep_lines)))
     command_lines = [
-        "- %s: %s" % (key, record["commands"][key])
-        for key in COMMAND_KEYS if key in record["commands"]
+        "- %s: %s" % (key, target["commands"][key])
+        for key in COMMAND_KEYS if key in target["commands"]
     ]
     sections.append(_block("scoped commands (run from the repository root)",
                            "\n".join(command_lines) or "(none)"))
     anchors = [line for line in agents_text.splitlines() if _ROOT_LINK_RE.search(line)]
     sections.append(_block("root rule links (AGENTS.md lines linking ../AGENTS or AGENTS/)",
                            "\n".join(anchors) or "(none)"))
-    return _join_sections(sections), []
+    return _join_sections(sections), [], warnings
 
 
 def _join_sections(sections: List[str]) -> str:
@@ -590,7 +639,9 @@ def cmd_brief(target: Path, root_arg: Optional[str], budget: int) -> int:
     except ValueError:
         print("error  %s is outside root %s" % (target, root), file=sys.stderr)
         return 1
-    pack, problems = brief_pack(root, folder)
+    pack, problems, warnings = brief_pack(root, folder)
+    for warning in warnings:
+        print("warning  %s" % warning, file=sys.stderr)
     if problems:
         for problem in problems:
             print("error  %s" % problem, file=sys.stderr)

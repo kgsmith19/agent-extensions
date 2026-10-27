@@ -446,7 +446,7 @@ def test_brief_at_exact_budget_passes(tmp_path, capsys):
 
 def test_brief_refuses_an_invalid_tree(tmp_path, capsys):
     root = _brief_tree(tmp_path)
-    _context(root, "c", "c", depends_on=("missing",))
+    _context(root, "b", "b", public=("api.md",), depends_on=("missing",))
     rc = ctx.main(["brief", str(root / "b"), "--root", str(root)])
     captured = capsys.readouterr()
     assert rc == 1
@@ -548,3 +548,43 @@ def test_install_module_dispatches_context_subcommand(tmp_path):
     )
     assert proc.returncode == 0, proc.stderr
     assert "a  path=a" in proc.stdout
+
+
+# ---------------------------------------------------------------- std skeleton and scoped brief
+
+
+def test_std_template_skeleton_is_skipped_by_list_brief_and_wire(tmp_path, capsys):
+    root = _brief_tree(tmp_path)
+    skeleton = root / "TEMPLATES" / "context"
+    _write(skeleton / "context.yaml", (ctx.TEMPLATE_DIR / "context.yaml").read_text(encoding="utf-8"))
+    _write(skeleton / "AGENTS.md", "# <name> context\n")
+    _write(skeleton / "README.md", "# <Context name>\n")
+    assert ctx.main(["list", str(root)]) == 0
+    listing = capsys.readouterr().out
+    assert "TEMPLATES" not in listing
+    assert ctx.main(["brief", str(root / "b"), "--root", str(root)]) == 0
+    capsys.readouterr()
+    assert ctx.main(["wire", str(root)]) == 0
+    assert not (skeleton / "CLAUDE.md").exists()
+
+
+def test_brief_warns_on_unrelated_broken_sibling_and_still_packs(tmp_path, capsys):
+    root = _brief_tree(tmp_path)
+    _context(root, "c", "c", readme=None)
+    rc = ctx.main(["brief", str(root / "b"), "--root", str(root)])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "# b rules" in captured.out
+    assert "pack bytes: " in captured.out
+    assert "warning" in captured.err
+    assert "c/README.md" in captured.err
+
+
+def test_brief_refuses_when_a_dependency_is_broken(tmp_path, capsys):
+    root = _brief_tree(tmp_path)
+    (root / "a" / "README.md").unlink()
+    rc = ctx.main(["brief", str(root / "b"), "--root", str(root)])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    assert "a/README.md" in captured.err
