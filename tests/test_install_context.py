@@ -196,7 +196,7 @@ def test_new_creates_nested_folders(tmp_path):
 @pytest.mark.parametrize("bad", ["Bad_Name", "-a", "a-", "a--b", "A", "9lives", "a b"])
 def test_new_rejects_non_kebab_case_name_and_writes_nothing(tmp_path, capsys, bad):
     target = tmp_path / "a"
-    rc = ctx.main(["new", str(target), "--name", bad, "--purpose", "The a context."])
+    rc = ctx.main(["new", str(target), f"--name={bad}", "--purpose", "The a context."])
     assert rc == 1
     assert "kebab-case" in capsys.readouterr().err
     assert not target.exists()
