@@ -21,8 +21,10 @@ After the first bootstrap, the everyday command is `ae`:
 
     ae update        # grab the latest checkout + re-converge the machine
     ae init [repo]   # forceful repo-mode injection (gitignored): AGENTS.local.md overlay, harness bindings, compliance guard
-    ae status        # read-only per-stage state report
-    ae bootstrap     # re-run the full machine install (idempotent)
+    ae status        # read-only state report + AGENT_* bundle drift gate (exit 1 drift/missing, 2 provider unreachable)
+    ae status --repair  # same, then converge a drifted bundle through bootstrap's bundle stage
+    ae bootstrap [--seed FILE]  # re-run the full machine install (idempotent); the seed materializes the AGENT_* bundle
+    ae bundle [--seed FILE]     # materialize only the AGENT_* bundle (session start runs this when INFISICAL_* is set)
 
 Repo-mode writes only gitignored paths (AGENTS.local.md,
 .claude/settings.local.json, .pi/settings.json when absent) — your repo's
