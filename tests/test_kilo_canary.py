@@ -141,6 +141,18 @@ def test_deny_fails_when_the_denial_has_no_rule_citation():
     assert "wrong reason" in verdict["reason"]
 
 
+def test_deny_fails_when_the_write_completed_even_if_a_rule_is_cited():
+    # A false permit: the tool call completed, so a cited deny rule proves nothing.
+    events = _events("deny_events.jsonl")
+    for event in events:
+        state = event.get("part", {}).get("state")
+        if state and state.get("status") == "error":
+            state["status"] = "completed"
+    verdict = rc.judge_deny(events, {}, filename="forbidden.txt", permission="edit")
+    assert verdict["verdict"] == "fail"
+    assert "was not denied" in verdict["reason"]
+
+
 def test_deny_fails_for_missing_setup_even_though_file_is_absent():
     # "tool not offered" is a denial by missing setup, not by rule: wrong reason.
     verdict = rc.judge_deny(_events("bash_unavailable_events.jsonl"), {},
