@@ -71,8 +71,8 @@ def test_scripted_model_emits_the_configured_tool_call_then_answers():
     finally:
         server.shutdown()
         server.server_close()
-    calls = [json.loads(line[6:]) for line in first.splitlines()
-             if line.startswith("data: {") and '"tool_calls"' in line]
+    chunks = [json.loads(line[6:]) for line in first.splitlines() if line.startswith("data: {")]
+    calls = [c for c in chunks if "tool_calls" in c["choices"][0]["delta"]]
     assert len(calls) == 1
     call = calls[0]["choices"][0]["delta"]["tool_calls"][0]["function"]
     assert call["name"] == "write"
@@ -175,7 +175,7 @@ def test_deny_rule_must_be_a_deny_action():
 
 
 def _resume_args(**overrides):
-    run1 = _events("allow_events.jsonl")
+    run1 = _events("resume_run1_events.jsonl")
     run2 = _events("resume_run2_events.jsonl")
     base = dict(
         run1_events=run1,
@@ -207,6 +207,19 @@ def test_resume_fails_when_the_session_id_differs():
     args["run2_identity"] = {"session_id": other, "workspace_sha256": "abc"}
     verdict = rc.judge_resume(**args)
     assert verdict["verdict"] == "fail"
+
+
+def test_resume_fails_when_events_carry_another_session_even_if_identity_matches():
+    # Survivor fix: the identity claims the original session, so only the event
+    # stream's session ids can expose a different session.
+    args = _resume_args()
+    other = "ses_otherSessionIdentityXXXXXXXX"
+    args["run2_events"] = copy.deepcopy(args["run2_events"])
+    for event in args["run2_events"]:
+        event["sessionID"] = other
+    verdict = rc.judge_resume(**args)
+    assert verdict["verdict"] == "fail"
+    assert "original session id" in verdict["reason"]
 
 
 def test_resume_fails_when_the_second_run_started_a_new_session():
@@ -378,10 +391,14 @@ def test_workflow_pins_actions_by_full_sha_and_keeps_live_lane_dispatch_only():
     assert "Kilo canary · deterministic lane" in text
     assert "Kilo canary · live lane" in text
     assert "77ab1f4ccd183a543cb5b42435fbd181189f4995" in text
-    live = text.split("live lane:", 1)[1]
-    assert "workflow_dispatch" in text
-    assert "pull_request" in text.split("jobs:", 1)[0]
-    assert "if: github.event_name == 'workflow_dispatch'" in live
+    head, jobs = text.split("jobs:", 1)
+    assert "pull_request:" in head and "workflow_dispatch:" in head
+    live = jobs.split("  live:", 1)[1]
+    assert "if: github.event_name == 'workflow_dispatch' && inputs.lane == 'live'" in live
+    assert "id-token: write" in live
+    deterministic = jobs.split("  live:", 1)[0]
+    assert "id-token" not in deterministic
+    assert "Infisical" not in deterministic
 
 
 def test_live_lane_config_is_non_secret_and_not_provisioned_by_default():

@@ -1,0 +1,139 @@
+name: Kilo canary
+
+# Bounded-task canary for Kilo (#36, R3). Runs the real pinned Kilo CLI against a
+# deterministic scripted model (the one double). Deliberately NOT part of the PR
+# Gate: the deterministic job is informational for the canary tree, and the live
+# job is dispatch-only and advisory. See canary/kilo/README.md.
+
+on:
+  pull_request:
+    paths:
+      - "canary/kilo/**"
+      - ".github/workflows/kilo-canary.yml"
+  workflow_dispatch:
+    inputs:
+      lane:
+        description: "live runs the real provider (advisory, needs live-lane.json provisioned)"
+        type: choice
+        options:
+          - deterministic
+          - live
+        default: deterministic
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kilo-canary-${{ github.event.pull_request.number || github.sha }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  deterministic:
+    name: Kilo canary · deterministic lane
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out exact ref
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node (pinned)
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22.19.0"
+      - name: Install the pinned Kilo CLI into a temp prefix
+        env:
+          PREFIX: ${{ runner.temp }}/kilo-prefix
+        run: |
+          npm install --no-audit --no-fund --prefix "$PREFIX" @kilocode/cli@7.8.10
+          echo "KILO_BIN=$PREFIX/node_modules/.bin/kilo" >> "$GITHUB_ENV"
+      - name: Run the canary (real parser and launcher, scripted model)
+        env:
+          OUT: ${{ runner.temp }}/kilo-canary
+        run: |
+          mkdir -p "$OUT"
+          python3 canary/kilo/run_canary.py \
+            --kilo-bin "$KILO_BIN" \
+            --node-dir "$(dirname "$(command -v node)")" \
+            --work "$OUT/work" \
+            --out "$OUT/receipt.json"
+      - name: Upload the receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: kilo-canary-receipt-deterministic
+          path: ${{ runner.temp }}/kilo-canary/receipt.json
+          if-no-files-found: error
+          retention-days: 30
+
+  live:
+    # Dispatch-only, advisory. Never part of the PR Gate.
+    name: Kilo canary · live lane
+    if: github.event_name == 'workflow_dispatch' && inputs.lane == 'live'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out exact ref
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Read the non-secret live-lane config
+        id: cfg
+        run: |
+          python3 - "canary/kilo/live-lane.json" >> "$GITHUB_OUTPUT" <<'PY'
+          import json, sys
+          cfg = json.load(open(sys.argv[1], encoding="utf-8"))
+          provisioned = bool(cfg.get("infisical_identity_id"))
+          print(f"provisioned={'true' if provisioned else 'false'}")
+          for key in ("infisical_identity_id", "project_slug", "secret_path", "secret_name"):
+              print(f"{key}={cfg.get(key, '')}")
+          PY
+      - name: Live lane not provisioned (notice, not a failure)
+        if: steps.cfg.outputs.provisioned != 'true'
+        run: |
+          echo "::notice title=Kilo canary live lane::live lane not provisioned (owner action: create Infisical OIDC identity for this workflow)"
+          echo "Kilo canary · live lane: skipped (not provisioned)" >> "$GITHUB_STEP_SUMMARY"
+      - name: Fetch the provider key from Infisical (OIDC)
+        if: steps.cfg.outputs.provisioned == 'true'
+        uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16
+        with:
+          method: oidc
+          identity-id: ${{ steps.cfg.outputs.infisical_identity_id }}
+          project-slug: ${{ steps.cfg.outputs.project_slug }}
+          env-slug: dev
+          secret-path: ${{ steps.cfg.outputs.secret_path }}
+          export-type: env
+      - name: Set up Node (pinned)
+        if: steps.cfg.outputs.provisioned == 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22.19.0"
+      - name: Install the pinned Kilo CLI into a temp prefix
+        if: steps.cfg.outputs.provisioned == 'true'
+        env:
+          PREFIX: ${{ runner.temp }}/kilo-prefix
+        run: |
+          npm install --no-audit --no-fund --prefix "$PREFIX" @kilocode/cli@7.8.10
+          echo "KILO_BIN=$PREFIX/node_modules/.bin/kilo" >> "$GITHUB_ENV"
+      - name: Run the canary against the real provider (advisory)
+        if: steps.cfg.outputs.provisioned == 'true'
+        continue-on-error: true
+        env:
+          OUT: ${{ runner.temp }}/kilo-canary
+        run: |
+          mkdir -p "$OUT"
+          python3 canary/kilo/run_canary.py \
+            --lane live \
+            --kilo-bin "$KILO_BIN" \
+            --node-dir "$(dirname "$(command -v node)")" \
+            --work "$OUT/work" \
+            --out "$OUT/receipt.json"
+      - name: Upload the advisory receipt
+        if: steps.cfg.outputs.provisioned == 'true' && always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: kilo-canary-receipt-live-advisory
+          path: ${{ runner.temp }}/kilo-canary/receipt.json
+          if-no-files-found: error
+          retention-days: 30

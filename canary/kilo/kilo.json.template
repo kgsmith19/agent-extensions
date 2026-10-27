@@ -1,0 +1,16 @@
+{
+  "provider": {{PROVIDER}},
+  "model": "{{MODEL}}",
+  "permission": {
+    "*": "deny",
+    "read": "allow",
+    "edit": {
+      "*": "deny",
+      "**/allowed.txt": "allow"
+    },
+    "bash": {
+      "*": "deny",
+      "echo *": "allow"
+    }
+  }
+}
