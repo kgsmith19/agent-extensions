@@ -1,0 +1,3 @@
+source: kgsmith19/agent-engineering-standard TEMPLATES/context
+commit: e58c9b5
+note: copied verbatim; re-copy from std when TEMPLATES/context changes (issue #87)
