@@ -1,0 +1,7 @@
+{
+  "infisical_identity_id": "",
+  "project_slug": "",
+  "secret_path": "/dev/",
+  "secret_name": "DEV_KILO_API_KEY",
+  "model": "kilo/default"
+}
