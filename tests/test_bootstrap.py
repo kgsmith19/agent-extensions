@@ -21,8 +21,10 @@ def test_clean_machine_bootstrap_applies(tmp_path):
     home = tmp_path / "home"
     report = bootstrap(_repo(), home=home)
     assert report.ok(), [(s.name, s.status, s.detail) for s in report.stages]
+    # Oracle change (#83): "harness" stage inserted right after "detect".
     assert [s.name for s in report.stages] == [
         "detect",
+        "harness",
         "locks",
         "catalog",
         "profile",
