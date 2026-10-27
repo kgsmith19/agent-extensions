@@ -7,15 +7,18 @@
 #
 # 1. provision  — run the agent-extensions installer only when the capability
 #                 layer is absent (~/.agents/skills empty or ~/bin/<ae> missing)
-# 2. path       — append `export PATH="$HOME/bin:$PATH"` to FILE once, so the
+# 2. bundle     — when the INFISICAL_* machine identity is in the environment,
+#                 materialize the AGENT_* instruction bundle (`ae bundle`,
+#                 issue #60): idempotent, prints key names only, never values
+# 3. path       — append `export PATH="$HOME/bin:$PATH"` to FILE once, so the
 #                 harness exports it for the rest of the session
-# 3. queue      — print the owner's execution queue: active item, next item
+# 4. queue      — print the owner's execution queue: active item, next item
 #                 and handoff (agent_extensions/queue_cli.py brief)
 #
 # Every step reports ok / present / skipped / degraded and the script always
 # exits 0: a missing network or tool degrades the session, never blocks it.
 # Overrides (used by tests), run as PowerShell commands:
-# AE_SESSION_PROVISION_CMD, AE_QUEUE_CMD; AE_QUEUE_BASE_URL as in the sh script.
+# AE_SESSION_PROVISION_CMD, AE_SESSION_BUNDLE_CMD, AE_QUEUE_CMD; AE_QUEUE_BASE_URL as in the sh script.
 param([string]$EnvFile = "")
 $ErrorActionPreference = "Continue"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
@@ -55,7 +58,25 @@ if ($hasSkills -and $launcher) {
     }
 }
 
-# 2. path --------------------------------------------------------------------
+# 2. bundle ------------------------------------------------------------------
+if ($env:INFISICAL_CLIENT_ID -and $env:INFISICAL_CLIENT_SECRET -and $env:INFISICAL_PROJECT_ID) {
+    if ($env:AE_SESSION_BUNDLE_CMD) {
+        $r = Invoke-Override $env:AE_SESSION_BUNDLE_CMD
+    } else {
+        $env:PYTHONPATH = $RepoRoot + $(if ($env:PYTHONPATH) { [IO.Path]::PathSeparator + $env:PYTHONPATH })
+        $out = & $Python -m agent_extensions.install bundle 2>&1 | Out-String
+        $r = @{ Out = $out; Code = $LASTEXITCODE }
+    }
+    if ($r.Code -eq 0) {
+        Write-Output "bundle: ok ($(Get-LastLine $r.Out))"
+    } else {
+        Write-Output "bundle: degraded (exit $($r.Code): $(Get-LastLine $r.Out))"
+    }
+} else {
+    Write-Output "bundle: skipped (no INFISICAL_* identity in the environment)"
+}
+
+# 3. path --------------------------------------------------------------------
 $pathLine = 'export PATH="$HOME/bin:$PATH"'
 if (-not $EnvFile) {
     Write-Output "path: skipped (no -EnvFile)"
@@ -70,7 +91,7 @@ if (-not $EnvFile) {
     }
 }
 
-# 3. queue -------------------------------------------------------------------
+# 4. queue -------------------------------------------------------------------
 Write-Output "== Execution queue (binding order) =="
 if ($env:AE_QUEUE_CMD) {
     $r = Invoke-Override $env:AE_QUEUE_CMD

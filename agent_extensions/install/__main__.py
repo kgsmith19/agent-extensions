@@ -1,4 +1,4 @@
-"""CLI for agent_extensions.install: bootstrap | update | init [repo] | status.
+"""CLI for agent_extensions.install: bootstrap | bundle | update | init [repo] | status.
 
 Exit code 0 iff the run's report is ok (no failed stages). status is
 informational and read-only; it never exits non-zero for drift.
@@ -91,6 +91,10 @@ def main(argv: list[str] | None = None) -> int:
         help="machine-identity seed file (INFISICAL_CLIENT_ID/SECRET/PROJECT_ID lines); "
         "materializes the AGENT_* instruction bundle (default: the INFISICAL_* environment, if set)",
     )
+    p_bundle = sub.add_parser(
+        "bundle", help="materialize only the AGENT_* instruction bundle (session start; idempotent)"
+    )
+    p_bundle.add_argument("--seed", default=None, help="machine-identity seed file (default: the INFISICAL_* environment)")
     sub.add_parser("update", help="ensure latest checkout, then converge (idempotent)")
     p_init = sub.add_parser("init", help="forceful repo-mode injection (gitignored)")
     p_init.add_argument("repo", nargs="?", default=None, help="target repo (default: cwd)")
@@ -114,6 +118,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "status":
         print(_probe_status(install_repo, home))
         return 0
+    if args.cmd == "bundle":
+        from agent_extensions.install import bundle
+
+        seed = Path(args.seed).expanduser() if args.seed else None
+        result = bundle.stage_bundle(home, seed_path=seed, env=os.environ)
+        print(f"{result.status:8} {result.name}: {result.detail}")
+        return 1 if result.status == "failed" else 0
     if args.cmd == "update":
         from agent_extensions.install.update import cmd_update
 
