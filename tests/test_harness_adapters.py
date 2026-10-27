@@ -322,9 +322,12 @@ def test_additive_checker_allows_new_optional_property_and_enum_value():
 
 # ------------------------------------------------ AC2: protocol and registry
 
-def test_registry_has_five_adapters_implementing_protocol():
-    # Oracle change (#83): "generic" fallback adapter registered in ADAPTERS.
-    assert sorted(ADAPTERS) == ["antigravity", "claude-code", "codex", "generic", "local"]
+def test_registry_has_nine_adapters_implementing_protocol():
+    # Oracle change (#84): kilo, pi, cline and opencode stubs registered in ADAPTERS
+    # (phase 2 pinned five, including "generic" from #83).
+    assert sorted(ADAPTERS) == [
+        "antigravity", "claude-code", "cline", "codex", "generic", "kilo", "local", "opencode", "pi",
+    ]
     for name, adapter in ADAPTERS.items():
         assert isinstance(adapter, HarnessAdapter), name
         assert adapter.name == name

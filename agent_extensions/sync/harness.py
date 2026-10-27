@@ -42,6 +42,8 @@ class _BaseAdapter:
     import_instruction: str = ""
     supported_kinds: frozenset = frozenset()
     _gaps: tuple = ()
+    # One line: why the declared gaps are gaps. Empty only when there are none.
+    gap_reason: str = ""
 
     def gaps(self) -> List[str]:
         return list(self._gaps)
@@ -80,6 +82,10 @@ class CodexAdapter(_BaseAdapter):
     import_instruction = "link plugins/<plugin>/skills/<skill> under $CODEX_SKILLS_DIR"
     supported_kinds = frozenset({"skill", "mcp"})
     _gaps = ("hook-inheritance", "sandbox")
+    gap_reason = (
+        "the hook wrapper bridges invocation only, not Claude-native hook semantics; "
+        "sandbox behaviour is not modelled"
+    )
 
 
 class AntigravityAdapter(_BaseAdapter):
@@ -89,6 +95,10 @@ class AntigravityAdapter(_BaseAdapter):
     import_instruction = "link plugins/<plugin> under $ANTIGRAVITY_PLUGINS_DIR"
     supported_kinds = frozenset({"skill", "plugin", "mcp"})
     _gaps = ("hook-inheritance", "sandbox")
+    gap_reason = (
+        "the hook wrapper bridges invocation only, not Claude-native hook semantics; "
+        "sandbox behaviour is not modelled"
+    )
 
 
 class LocalAdapter(_BaseAdapter):
@@ -98,6 +108,9 @@ class LocalAdapter(_BaseAdapter):
     import_instruction = "read plugins/<plugin>/skills/<skill>/SKILL.md directly (headless)"
     supported_kinds = frozenset({"skill", "mcp"})
     _gaps = ("account-surface", "sandbox")
+    gap_reason = (
+        "headless runs have no account-level surface; sandbox behaviour is not modelled"
+    )
 
 
 class GenericAdapter(_BaseAdapter):
@@ -113,6 +126,7 @@ class GenericAdapter(_BaseAdapter):
     import_instruction = "read plugins/<plugin>/skills/<skill>/SKILL.md directly (stdio MCP only)"
     supported_kinds = frozenset({"skill", "mcp"})
     _gaps = ("hooks", "plugins", "agents", "commands", "connectors", "http-mcp")
+    gap_reason = "unknown harness: only SKILL.md reads and stdio MCP are assumed"
 
     def _supports(self, cap: Mapping) -> bool:
         if cap["kind"] == "skill":
@@ -127,6 +141,76 @@ class GenericAdapter(_BaseAdapter):
         return {"supported": supported, "unsupported": unsupported}
 
 
+# Stubs (#84): declared surface only, claimed from this repo's code and nothing more.
+# Skills are the only supported kind. Each stub is reachable through AE_HARNESS
+# only (no environment marker) and is deliberately absent from PROVIDER_ADAPTERS
+# and from the legacy adapters.PROVIDERS tuple.
+_STUB_SUPPORTED = frozenset({"skill"})
+_STUB_GAPS = ("hooks", "plugins", "agents", "commands", "connectors", "mcp", "subagent-model-tiers")
+
+
+class KiloAdapter(_BaseAdapter):
+    name = "kilo"
+    provider = "kilo"
+    transport_key = ""
+    import_instruction = (
+        "read plugins/<plugin>/skills/<skill>/SKILL.md directly; "
+        "~/.config/kilo/HARNESS.md is an instruction shim only"
+    )
+    supported_kinds = _STUB_SUPPORTED
+    _gaps = _STUB_GAPS
+    gap_reason = (
+        "installer ships only the HARNESS.md instruction shim; no hook, plugin, agent, "
+        "command, connector, MCP, or subagent-model surface is wired or verified"
+    )
+
+
+class PiAdapter(_BaseAdapter):
+    name = "pi"
+    provider = "pi"
+    transport_key = ""
+    import_instruction = (
+        "link plugins/<plugin>/skills/<skill> under ~/.agents/skills (pi's skill directory; "
+        "not installed by this repo)"
+    )
+    supported_kinds = _STUB_SUPPORTED
+    _gaps = _STUB_GAPS
+    gap_reason = (
+        "installer ships an AGENTS.md shim and a continuity extension, not canonical hooks; "
+        "no plugin, agent, command, connector, MCP, or subagent-model surface is wired"
+    )
+
+
+class ClineAdapter(_BaseAdapter):
+    name = "cline"
+    provider = "cline"
+    transport_key = ""
+    import_instruction = (
+        "read plugins/<plugin>/skills/<skill>/SKILL.md directly (stub: no installer support)"
+    )
+    supported_kinds = _STUB_SUPPORTED
+    _gaps = _STUB_GAPS
+    gap_reason = (
+        "no Cline code in this repo; the SKILL.md read path is unverified and every other "
+        "surface is undeclared"
+    )
+
+
+class OpenCodeAdapter(_BaseAdapter):
+    name = "opencode"
+    provider = "opencode"
+    transport_key = ""
+    import_instruction = (
+        "read plugins/<plugin>/skills/<skill>/SKILL.md directly (stub: no installer support)"
+    )
+    supported_kinds = _STUB_SUPPORTED
+    _gaps = _STUB_GAPS
+    gap_reason = (
+        "no OpenCode code in this repo; the SKILL.md read path is unverified and every other "
+        "surface is undeclared"
+    )
+
+
 ADAPTERS: Dict[str, HarnessAdapter] = {
     adapter.name: adapter
     for adapter in (
@@ -135,6 +219,10 @@ ADAPTERS: Dict[str, HarnessAdapter] = {
         AntigravityAdapter(),
         LocalAdapter(),
         GenericAdapter(),
+        KiloAdapter(),
+        PiAdapter(),
+        ClineAdapter(),
+        OpenCodeAdapter(),
     )
 }
 
