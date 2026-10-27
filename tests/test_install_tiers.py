@@ -114,10 +114,16 @@ def test_role_pointing_at_missing_tier_rejected(home):
         resolve_tiers(home, {})
 
 
-def test_profile_missing_a_role_tier_rejected(home):
-    _write_tiers(home, {"profiles": {"anthropic": {"planning": "opus"}}})
+def test_new_profile_missing_a_role_tier_rejected(home):
+    _write_tiers(home, {"profiles": {"openai": {"planning": "big"}}})
     with pytest.raises(TierConfigError, match="fast"):
         resolve_tiers(home, {})
+
+
+def test_anthropic_partial_override_merges_with_defaults(home):
+    _write_tiers(home, {"profiles": {"anthropic": {"fast": "sonnet"}}})
+    t = resolve_tiers(home, {})
+    assert t["profiles"]["anthropic"] == {"planning": "opus", "fast": "sonnet"}
 
 
 def test_fallback_must_be_a_string(home):
@@ -176,7 +182,7 @@ def test_reviewer_declares_read_only_tools(home):
 def test_implementer_body_carries_limits_and_skills(home):
     _claude(home)
     stage_tiers(_repo(), home, env={})
-    text = _impl(home).read_text(encoding="utf-8")
+    text = _impl(home).read_text(encoding="utf-8").lower()
     for needle in (
         "own isolated git worktree",
         "never push",
