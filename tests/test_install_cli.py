@@ -85,7 +85,7 @@ def test_bootstrap_runs_machine_stages_then_sync(tmp_path, home):
     r = bootstrap(_repo(), home=home)
     names = [s.name for s in r.stages]
     # Issue #60: the AGENT_* bundle stage runs first (skipped here: no identity).
-    assert names[:5] == ["bundle", "gitignore", "shims", "hooks", "cli-shim"]
+    assert names[:6] == ["bundle", "gitignore", "shims", "tiers", "hooks", "cli-shim"]
     assert r.stages[0].status == "skipped"
     assert "detect" in names and "read-back" in names
     assert r.ok(), [(s.name, s.status, s.detail) for s in r.stages if s.status == "failed"]
