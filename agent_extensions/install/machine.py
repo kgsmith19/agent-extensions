@@ -1,4 +1,4 @@
-"""Machine-level setup stages: gitignore, shims, hooks, cli-shim (issue #53).
+"""Machine-level setup stages: gitignore, shims, tiers, hooks, cli-shim (issues #53, #81).
 
 Stage semantics are reused verbatim from agent_extensions.sync.bootstrap:
 applied | skipped | failed, never silent, failures never stop siblings,
@@ -167,6 +167,57 @@ def stage_shims(repo_root: Path, home: Path) -> StageResult:
         return "; ".join(notes)
 
     return _run_stage("shims", work, enabled=True)
+
+
+# ---- tiers (issue #81) ----
+
+from agent_extensions.install import tiers as _tiers
+
+
+def stage_tiers(repo_root: Path, home: Path, env: dict | None = None) -> StageResult:
+    """Render orchestrator/implementer model tiers into Claude Code subagents.
+
+    Gated on ~/.claude (never creates the harness dir). Resolution and
+    validation run before any write, so an invalid tier config fails the
+    stage and writes nothing. Marker-guarded like the shims: unmanaged
+    agent files are skipped, managed files converge, reruns are no-ops.
+    Harnesses other than claude-code are named gaps in the detail."""
+    e = env if env is not None else os.environ
+    gaps = ", ".join(_tiers.gap_names())
+    gate = home / ".claude"
+    if not gate.exists():
+        return StageResult(
+            name="tiers",
+            status=SKIPPED,
+            detail=f"claude-code: skipped (gate {gate} absent); gaps (not rendered): {gaps}",
+        )
+
+    def work() -> str:
+        models = _tiers.claude_agent_models(_tiers.resolve_tiers(home, e))
+        rendered = {
+            role: render_template(repo_root, template).replace("{model}", models[role])
+            for role, template in _tiers.CLAUDE_AGENT_TEMPLATES.items()
+        }
+        agents_dir = gate / "agents"
+        notes: list[str] = []
+        for role, text in rendered.items():
+            target = agents_dir / f"{role}.md"
+            if target.exists():
+                current = target.read_text(encoding="utf-8")
+                if install.MANAGED_MD_MARKER not in current:
+                    notes.append(f"{role}: skipped (unmanaged file present: {target})")
+                    continue
+                if current == text:
+                    notes.append(f"{role}: up to date")
+                    continue
+                _write_text(target, text)
+                notes.append(f"{role}: updated")
+            else:
+                _write_text(target, text)
+                notes.append(f"{role}: installed")
+        return f"claude-code: {'; '.join(notes)}; gaps (not rendered): {gaps}"
+
+    return _run_stage("tiers", work, enabled=True)
 
 
 # ---- hooks (Task 3) ----
@@ -482,7 +533,7 @@ def stage_cli_shim(install_repo: Path, home: Path, env: dict | None = None) -> S
 
 
 def bootstrap(install_repo: Path, home: Path | None = None, env: dict | None = None, seed: Path | None = None):
-    """Machine bootstrap: bundle → gitignore → shims → hooks → cli-shim, then the
+    """Machine bootstrap: bundle → gitignore → shims → tiers → hooks → cli-shim, then the
     capability-bundle sync stages delegated (never duplicated).
 
     The AGENT_* instruction bundle (issue #60) runs first, from the seed file
@@ -497,6 +548,7 @@ def bootstrap(install_repo: Path, home: Path | None = None, env: dict | None = N
     report.stages.append(stage_bundle(h, seed_path=seed, env=env if env is not None else os.environ))
     report.stages.append(stage_gitignore(h))
     report.stages.append(stage_shims(install_repo, h))
+    report.stages.append(stage_tiers(install_repo, h, env if env is not None else os.environ))
     report.stages.append(stage_hooks(install_repo, h))
     report.stages.append(stage_cli_shim(install_repo, h, env))
     report.stages.extend(sync_bootstrap(install_repo, home=h).stages)
