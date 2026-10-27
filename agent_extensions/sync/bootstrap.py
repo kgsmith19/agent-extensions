@@ -5,7 +5,7 @@ import shutil
 import stat
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Mapping, Optional
 
 APPLIED = "applied"
 SKIPPED = "skipped"
@@ -119,13 +119,16 @@ def bootstrap(
     selected_ids: Optional[List[str]] = None,
     home: Optional[Path] = None,
     surfaces: Optional[Dict[str, Path]] = None,
+    env: Optional[Mapping[str, str]] = None,
 ) -> BootstrapReport:
     """Idempotent capability-gated bootstrap.
 
-    Stages (shared semantics on every OS): detect → locks → catalog →
+    Stages (shared semantics on every OS): detect → harness → locks → catalog →
     profile → render → link → read-back. Each stage reports
     applied/skipped/failed independently; failures never stop siblings.
     Reruns converge: linking is a no-op when already correct.
+
+    `env` defaults to os.environ and drives harness detection (#83).
     """
     from agent_extensions.sync.locks import build_lock_from_repo
     from agent_extensions.schemas.extension_lock import verify_lockfile
@@ -133,6 +136,7 @@ def bootstrap(
     from agent_extensions.sync.selection import select_for_task
     from agent_extensions.sync.render import render_profile_to_manifest
     from agent_extensions.schemas.extension_lock import compute_digest
+    from agent_extensions.sync.harness import ADAPTERS, detect_harness
     import json
 
     repo_root = Path(repo_root)
@@ -148,6 +152,32 @@ def bootstrap(
     report.stages.append(
         _run_stage("detect", do_detect, enabled=True)
     )
+
+    environment = os.environ if env is None else env
+
+    def do_harness() -> str:
+        detection = detect_harness(environment, home)
+        adapter = ADAPTERS[detection.name]
+        skill_entries = [
+            {
+                "id": f"capability.{skill_md.parent.name}",
+                "kind": "skill",
+                "source": skill_md.parent.relative_to(repo_root).as_posix(),
+            }
+            for skill_md in sorted((repo_root / "plugins").glob("*/skills/*/SKILL.md"))
+        ]
+        report_map = adapter.capability_report({"version": "1.0.0", "capabilities": skill_entries})
+        state["harness"] = detection
+        state["harness_report"] = report_map
+        if detection.name == "generic":
+            gaps = ", ".join(adapter.gaps())
+            return (
+                "degraded: unknown harness, generic fallback "
+                f"(source={detection.source}); gaps: {gaps}"
+            )
+        return f"harness={detection.name} (source={detection.source})"
+
+    report.stages.append(_run_stage("harness", do_harness, enabled=True))
 
     def do_locks() -> str:
         lock = build_lock_from_repo(repo_root)

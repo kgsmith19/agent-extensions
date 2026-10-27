@@ -7,7 +7,9 @@ declared gaps, import instruction) lives on the adapter class and is the single
 source of truth; agent_extensions/sync/adapters.py derives its constants from here.
 """
 
-from typing import Dict, Iterable, List, Mapping, Protocol, runtime_checkable
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, Iterable, List, Mapping, Optional, Protocol, Tuple, runtime_checkable
 
 KINDS = ("skill", "plugin", "agent", "command", "hook", "mcp", "connector")
 TRANSPORTS = ("stdio", "http", "sse")
@@ -98,10 +100,111 @@ class LocalAdapter(_BaseAdapter):
     _gaps = ("account-surface", "sandbox")
 
 
+class GenericAdapter(_BaseAdapter):
+    """Fallback for an unknown harness: the smallest surface that is safe to claim.
+
+    Skills are read directly from SKILL.md and MCP is limited to stdio. Every
+    other kind, and every non-stdio or transport-less MCP entry, is unsupported.
+    """
+
+    name = "generic"
+    provider = "generic"
+    transport_key = ""
+    import_instruction = "read plugins/<plugin>/skills/<skill>/SKILL.md directly (stdio MCP only)"
+    supported_kinds = frozenset({"skill", "mcp"})
+    _gaps = ("hooks", "plugins", "agents", "commands", "connectors", "http-mcp")
+
+    def _supports(self, cap: Mapping) -> bool:
+        if cap["kind"] == "skill":
+            return True
+        return cap["kind"] == "mcp" and cap.get("transport") == "stdio"
+
+    def capability_report(self, manifest: dict) -> dict:
+        supported, unsupported = [], []
+        for cap in manifest["capabilities"]:
+            target = supported if self._supports(cap) else unsupported
+            target.append(cap["id"])
+        return {"supported": supported, "unsupported": unsupported}
+
+
 ADAPTERS: Dict[str, HarnessAdapter] = {
     adapter.name: adapter
-    for adapter in (ClaudeCodeAdapter(), CodexAdapter(), AntigravityAdapter(), LocalAdapter())
+    for adapter in (
+        ClaudeCodeAdapter(),
+        CodexAdapter(),
+        AntigravityAdapter(),
+        LocalAdapter(),
+        GenericAdapter(),
+    )
 }
+
+# Environment markers that identify a harness. Each entry is
+# (variable, required value or None). None means "set and non-empty".
+# Only markers with a clear basis are listed; anything unsure stays out, so the
+# harness is left undetected (generic fallback) rather than guessed.
+HARNESS_MARKERS: Dict[str, Tuple[Tuple[str, Optional[str]], ...]] = {
+    # CLAUDECODE=1 is exported by Claude Code into the shells it spawns (verified
+    # present in a Claude Code shell). CLAUDE_CODE_ENTRYPOINT names the launch
+    # surface and is set on the same path (verified present in a Claude Code shell).
+    "claude-code": (("CLAUDECODE", "1"), ("CLAUDE_CODE_ENTRYPOINT", None)),
+    # CODEX_SANDBOX is set by the Codex CLI's command sandbox (basis: the owner's
+    # marker table; not verifiable in this sandbox). CODEX_HOME is deliberately
+    # NOT a marker: it is a user-exported config path that can persist outside
+    # any Codex run. GEMINI_CLI is NOT mapped: it identifies Gemini CLI, not the
+    # antigravity harness this repo targets, so mapping it would be a guess.
+    "codex": (("CODEX_SANDBOX", None),),
+}
+
+# Reserved for future filesystem-based detection. Detection is environment-only
+# in this version, so `home` is accepted for signature stability and not read.
+
+
+@dataclass(frozen=True)
+class HarnessDetection:
+    """Which harness was chosen, and why.
+
+    source: "override" (AE_HARNESS), "env" (a marker), or "fallback" (generic).
+    """
+
+    name: str
+    source: str
+    evidence: str
+
+
+def detect_harness(env: Mapping[str, str], home: Optional[Path] = None) -> HarnessDetection:
+    """Resolve the harness: AE_HARNESS override, else markers, else generic fallback.
+
+    Raises:
+        ValueError: When AE_HARNESS is set to a name that is not a registered
+            adapter. An unknown override is reported, never silently ignored.
+    """
+    override = (env.get("AE_HARNESS") or "").strip()
+    if override:
+        if override not in ADAPTERS:
+            raise ValueError(
+                f"unknown AE_HARNESS {override!r}; expected one of {sorted(ADAPTERS)}"
+            )
+        return HarnessDetection(name=override, source="override", evidence=f"AE_HARNESS={override}")
+
+    matched: List[Tuple[str, str]] = []
+    for harness, markers in HARNESS_MARKERS.items():
+        for var, want in markers:
+            value = env.get(var) or ""
+            if value and (want is None or value == want):
+                matched.append((harness, var))
+                break
+
+    if len(matched) == 1:
+        harness, var = matched[0]
+        return HarnessDetection(name=harness, source="env", evidence=f"{var} set")
+    if len(matched) > 1:
+        names = ", ".join(f"{h} via {v}" for h, v in matched)
+        return HarnessDetection(
+            name="generic", source="fallback", evidence=f"ambiguous markers: {names}"
+        )
+    return HarnessDetection(
+        name="generic", source="fallback", evidence="no harness marker in environment"
+    )
 
 # Legacy provider key (adapters.PROVIDERS) -> harness adapter name in ADAPTERS.
 PROVIDER_ADAPTERS: Dict[str, str] = {
