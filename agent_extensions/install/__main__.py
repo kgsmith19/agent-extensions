@@ -21,6 +21,35 @@ def _print_report(report) -> None:
         print(f"{s.status:8} {s.name}: {s.detail}")
 
 
+def _tier_status_lines(install_repo: Path, home: Path) -> list[str]:
+    """Read-only tiers/claude lines (issue #81), mirroring the shim states."""
+    from agent_extensions import install as pkg
+    from agent_extensions.install import tiers
+    from agent_extensions.install.machine import render_template
+
+    gate = home / ".claude"
+    if not gate.exists():
+        return ["skipped  tiers/claude: gate absent (~/.claude)"]
+    try:
+        models = tiers.claude_agent_models(tiers.resolve_tiers(home, os.environ))
+    except tiers.TierConfigError as exc:
+        return [f"drifted  tiers/claude: invalid tier config ({exc})"]
+    lines: list[str] = []
+    for role, template in tiers.CLAUDE_AGENT_TEMPLATES.items():
+        t = gate / "agents" / f"{role}.md"
+        if not t.exists():
+            lines.append(f"drifted  tiers/claude: {role}.md missing")
+            continue
+        current = t.read_text(encoding="utf-8")
+        if pkg.MANAGED_MD_MARKER not in current:
+            lines.append(f"unmanaged tiers/claude: {role}.md present, not ours ({t})")
+        elif current == render_template(install_repo, template).replace("{model}", models[role]):
+            lines.append(f"applied  tiers/claude: {role}.md current (model {models[role]})")
+        else:
+            lines.append(f"drifted  tiers/claude: {role}.md differs from rendered tiers")
+    return lines
+
+
 def _probe_status(install_repo: Path, home: Path) -> str:
     """Read-only state lines (never writes): one line per machine stage."""
     from agent_extensions import install as pkg
@@ -57,6 +86,8 @@ def _probe_status(install_repo: Path, home: Path) -> str:
             lines.append(f"applied  shims/{spec.name}: current")
         else:
             lines.append(f"drifted  shims/{spec.name}: differs from template")
+
+    lines.extend(_tier_status_lines(install_repo, home))
 
     hooks = home / ".claude" / "settings.json"
     if hooks.exists() and pkg.MANAGED_MD_MARKER or hooks.exists():
