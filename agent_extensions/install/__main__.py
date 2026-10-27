@@ -1,7 +1,11 @@
 """CLI for agent_extensions.install: bootstrap | bundle | update | init [repo] | status.
 
 Exit code 0 iff the run's report is ok (no failed stages). status is
-informational and read-only; it never exits non-zero for drift.
+read-only. Its machine-stage lines are informational; its AGENT_* bundle
+section is the drift and freshness gate (issue #61): exit 1 on any DRIFT or
+MISSING key, 2 when the secret provider cannot be reached, with the converge
+command printed. `status --repair` runs bootstrap's bundle stage, then
+verifies again.
 """
 
 from __future__ import annotations
@@ -98,7 +102,13 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("update", help="ensure latest checkout, then converge (idempotent)")
     p_init = sub.add_parser("init", help="forceful repo-mode injection (gitignored)")
     p_init.add_argument("repo", nargs="?", default=None, help="target repo (default: cwd)")
-    sub.add_parser("status", help="read-only machine state report")
+    p_status = sub.add_parser(
+        "status", help="read-only machine state report + AGENT_* bundle drift gate (exit 1 drift, 2 unreachable)"
+    )
+    p_status.add_argument("--seed", default=None, help="machine-identity seed file (default: the INFISICAL_* environment)")
+    p_status.add_argument(
+        "--repair", action="store_true", help="on DRIFT or MISSING, run bootstrap's bundle stage, then verify again"
+    )
     p_queue = sub.add_parser("queue", help="the owner's execution queue: `brief`, or any std "
                              "work_queue.py command (exit code preserved)")
     p_queue.add_argument("args", nargs=argparse.REMAINDER)
@@ -116,8 +126,18 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     if args.cmd == "status":
+        from agent_extensions.install import bundle, bundle_status
+
         print(_probe_status(install_repo, home))
-        return 0
+        seed = Path(args.seed).expanduser() if args.seed else None
+        report = bundle_status.verify(home, seed_path=seed, env=os.environ)
+        print("\n".join(report.lines()))
+        if args.repair and report.exit_code == bundle_status.EXIT_DRIFT:
+            result = bundle.stage_bundle(home, seed_path=seed, env=os.environ, client=bundle_status.default_client(os.environ))
+            print(f"repair: {result.status} {result.name}: {result.detail}")
+            report = bundle_status.verify(home, seed_path=seed, env=os.environ)
+            print("\n".join(report.lines()))
+        return report.exit_code
     if args.cmd == "bundle":
         from agent_extensions.install import bundle
 

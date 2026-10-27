@@ -124,7 +124,8 @@ class InfisicalClient:
         except ValueError:
             raise ProviderError("secret provider returned malformed JSON") from None
 
-    def login(self, client_id: str, client_secret: str) -> str:
+    def login_with_ttl(self, client_id: str, client_secret: str) -> tuple[str, int | None]:
+        """Log in; return the access token and its lifetime in seconds (None when not reported)."""
         body = json.dumps({"clientId": client_id, "clientSecret": client_secret}).encode("utf-8")
         req = urllib.request.Request(
             f"{self.api_base}/api/v1/auth/universal-auth/login",
@@ -132,23 +133,36 @@ class InfisicalClient:
             method="POST",
             headers={"Content-Type": "application/json"},
         )
-        token = self._call(req).get("accessToken")
+        data = self._call(req)
+        token = data.get("accessToken")
         if not token:
             raise ProviderError("secret provider login returned no access token")
-        return token
+        ttl = data.get("expiresIn")
+        return token, int(ttl) if isinstance(ttl, (int, float)) and not isinstance(ttl, bool) else None
 
-    def fetch_root(self, token: str, project_id: str) -> dict[str, str]:
-        query = urllib.parse.urlencode({"workspaceId": project_id, "environment": PROVIDER_ENV, "secretPath": "/"})
+    def login(self, client_id: str, client_secret: str) -> str:
+        return self.login_with_ttl(client_id, client_secret)[0]
+
+    def _list(self, token: str, project_id: str, path: str, **extra: str) -> list:
+        query = urllib.parse.urlencode(
+            {"workspaceId": project_id, "environment": PROVIDER_ENV, "secretPath": path, **extra}
+        )
         req = urllib.request.Request(
             f"{self.api_base}/api/v3/secrets/raw?{query}",
             headers={"Authorization": f"Bearer {token}"},
         )
-        rows = self._call(req).get("secrets") or []
+        return [row for row in self._call(req).get("secrets") or [] if isinstance(row, dict)]
+
+    def fetch_root(self, token: str, project_id: str) -> dict[str, str]:
         return {
             row["secretKey"]: row.get("secretValue", "")
-            for row in rows
-            if isinstance(row, dict) and str(row.get("secretKey", "")).startswith("AGENT_")
+            for row in self._list(token, project_id, "/")
+            if str(row.get("secretKey", "")).startswith("AGENT_")
         }
+
+    def list_keys(self, token: str, project_id: str, path: str) -> set[str]:
+        """Key names at a path. Asks the provider to withhold values and drops any it sends anyway."""
+        return {str(row["secretKey"]) for row in self._list(token, project_id, path, viewSecretValue="false") if row.get("secretKey")}
 
 
 def _identity(seed_path: Path | None, env: Mapping[str, str]) -> dict[str, str] | None:
