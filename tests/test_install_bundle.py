@@ -303,3 +303,27 @@ def test_an_error_that_echoes_the_seed_secret_is_redacted(home, seed):
     result, _ = _run(home, seed, client=FakeClient(error=RuntimeError("login refused for sec-ret-value")))
     assert result.status == "failed"
     assert "sec-ret-value" not in result.detail and "[redacted]" in result.detail
+
+
+def test_cli_bundle_runs_only_the_bundle_stage(monkeypatch, tmp_path, home, capsys):
+    """`ae bundle` runs the single bundle stage (for session start); a skip exits 0, a failure exits 1."""
+    from agent_extensions.install import __main__ as cli
+    from agent_extensions.install import bundle
+    from agent_extensions.sync.bootstrap import StageResult
+
+    seen = {}
+
+    def fake_stage(home, **kw):
+        seen.update(kw)
+        return StageResult(name="bundle", status=seen.get("_status", "skipped"), detail="no identity")
+
+    monkeypatch.setattr(bundle, "stage_bundle", fake_stage)
+    assert cli.main(["bundle"]) == 0
+    assert "skipped  bundle: no identity" in capsys.readouterr().out
+    assert seen["seed_path"] is None
+
+    def failing_stage(home, **kw):
+        return StageResult(name="bundle", status="failed", detail="secret provider returned HTTP 401")
+
+    monkeypatch.setattr(bundle, "stage_bundle", failing_stage)
+    assert cli.main(["bundle", "--seed", str(tmp_path / "s.env")]) == 1

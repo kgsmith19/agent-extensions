@@ -17,7 +17,8 @@ function Reset-Home {
 
 function Invoke-SessionStart([hashtable]$Env, [string[]]$Arguments = @()) {
     # Runs the script in a child pwsh with exactly these overrides set.
-    $names = @("HOME", "AE_SESSION_PROVISION_CMD", "AE_QUEUE_CMD", "AE_QUEUE_BASE_URL", "AES_STANDARD_DIR", "AE_COMMAND")
+    $names = @("HOME", "AE_SESSION_PROVISION_CMD", "AE_QUEUE_CMD", "AE_QUEUE_BASE_URL", "AES_STANDARD_DIR", "AE_COMMAND",
+        "AE_SESSION_BUNDLE_CMD", "INFISICAL_CLIENT_ID", "INFISICAL_CLIENT_SECRET", "INFISICAL_PROJECT_ID")
     $saved = @{}
     foreach ($name in $names) { $saved[$name] = [Environment]::GetEnvironmentVariable($name) }
     try {
@@ -96,6 +97,29 @@ foreach ($want in @("Active item:", "Next item:", "Q99 \[active\] stub head", "H
     if ($r.Out -notmatch $want) { $failures += "brief missing '$want': $($r.Out)" }
 }
 if ($r.Code -ne 0) { $failures += "brief run exit $($r.Code)" }
+
+# #60: with the machine identity present, the bundle step runs once and reports ok
+$recordBundle = "Add-Content -Path '$calls' -Value bundle; Write-Output 'applied  bundle: AGENT_GLOBAL_RULES_MD: up to date'"
+$identity = @{ INFISICAL_CLIENT_ID = "cid"; INFISICAL_CLIENT_SECRET = "s3cret-canary"; INFISICAL_PROJECT_ID = "proj" }
+Reset-Home
+$envs = @{ AE_SESSION_PROVISION_CMD = "exit 0"; AE_QUEUE_CMD = $queueHead; AE_SESSION_BUNDLE_CMD = $recordBundle } + $identity
+$r = Invoke-SessionStart $envs
+if (@(Get-Content $calls | Where-Object { $_ -eq "bundle" }).Count -ne 1) { $failures += "#60: identity present but the bundle step did not run exactly once" }
+if ($r.Out -notmatch "bundle: ok") { $failures += "#60: missing 'bundle: ok': $($r.Out)" }
+if ($r.Out -match "s3cret-canary") { $failures += "#60: the client secret leaked into session output" }
+
+# #60: without the identity the bundle step is skipped and never runs
+Reset-Home
+$r = Invoke-SessionStart @{ AE_SESSION_PROVISION_CMD = "exit 0"; AE_QUEUE_CMD = $queueHead; AE_SESSION_BUNDLE_CMD = $recordBundle }
+if ((Get-Content $calls) -contains "bundle") { $failures += "#60: bundle step ran without an identity" }
+if ($r.Out -notmatch [regex]::Escape("bundle: skipped (no INFISICAL_* identity in the environment)")) { $failures += "#60: missing 'bundle: skipped': $($r.Out)" }
+
+# #60: a failing bundle step degrades, exit stays 0
+Reset-Home
+$envs = @{ AE_SESSION_PROVISION_CMD = "exit 0"; AE_QUEUE_CMD = $queueHead; AE_SESSION_BUNDLE_CMD = "Write-Output 'failed   bundle: secret provider returned HTTP 401'; exit 1" } + $identity
+$r = Invoke-SessionStart $envs
+if ($r.Code -ne 0) { $failures += "#60: failing bundle step changed exit code to $($r.Code)" }
+if ($r.Out -notmatch [regex]::Escape("bundle: degraded (exit 1: failed   bundle: secret provider returned HTTP 401)")) { $failures += "#60: missing 'bundle: degraded': $($r.Out)" }
 
 Remove-Item -Recurse -Force $scratch -ErrorAction SilentlyContinue
 if ($failures.Count -gt 0) {
