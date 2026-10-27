@@ -96,7 +96,7 @@ def test_every_gap_is_named_in_its_harness_section():
 @pytest.mark.parametrize("name", STUBS)
 def test_stub_sections_state_override_only_detection(name):
     section = matrix.render_matrix().split(f"\n### {name}\n", 1)[1].split("\n### ", 1)[0]
-    assert "AE_HARNESS override only" in section
+    assert "- Detection: `AE_HARNESS` override only" in section
 
 
 def test_doc_keeps_hook_bridging_and_stage_references():
