@@ -1,4 +1,4 @@
-"""CLI for agent_extensions.install: bootstrap | bundle | update | init [repo] | status.
+"""CLI for agent_extensions.install: bootstrap | bundle | update | init [repo] | status | queue | context.
 
 Exit code 0 iff the run's report is ok (no failed stages). status is
 read-only. Its machine-stage lines are informational; its AGENT_* bundle
@@ -143,11 +143,17 @@ def main(argv: list[str] | None = None) -> int:
     p_queue = sub.add_parser("queue", help="the owner's execution queue: `brief`, or any std "
                              "work_queue.py command (exit code preserved)")
     p_queue.add_argument("args", nargs=argparse.REMAINDER)
+    p_context = sub.add_parser("context", help="bounded contexts (issue #87): new | list | brief | wire")
+    p_context.add_argument("args", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     if args.cmd == "queue":
         from agent_extensions.queue_cli import main as queue_main
 
         return queue_main(args.args)
+    if args.cmd == "context":
+        from agent_extensions.install.context import main as context_main
+
+        return context_main(args.args)
 
     home = Path(os.path.expanduser("~"))
     here = Path(__file__).resolve()
