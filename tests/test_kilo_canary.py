@@ -425,3 +425,11 @@ def test_full_canary_against_the_real_cli(tmp_path):
     assert receipt["scenarios"]["resume"]["verdict"] == "pass"
     assert receipt["scenarios"]["cancel"]["verdict"] == "gap"
     assert rc.receipt_verdict(receipt) == "gap"
+
+
+def test_live_lane_reads_infisical_like_the_other_agent_workflows():
+    """DEV_* agent keys live in Infisical env prod under /dev/ (as hyp's dev agent reads them);
+    a dev env-slug would fetch nothing and the live lane would run keyless."""
+    live = (REPO / ".github" / "workflows" / "kilo-canary.yml").read_text(encoding="utf-8").split("  live:", 1)[1]
+    assert "env-slug: prod" in live
+    assert "domain: https://app.infisical.com" in live

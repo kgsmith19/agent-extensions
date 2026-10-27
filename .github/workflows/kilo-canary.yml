@@ -37,7 +37,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up Node (pinned)
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22.19.0"
       - name: Install the pinned Kilo CLI into a temp prefix
@@ -58,7 +58,7 @@ jobs:
             --out "$OUT/receipt.json"
       - name: Upload the receipt
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: kilo-canary-receipt-deterministic
           path: ${{ runner.temp }}/kilo-canary/receipt.json
@@ -101,12 +101,13 @@ jobs:
           method: oidc
           identity-id: ${{ steps.cfg.outputs.infisical_identity_id }}
           project-slug: ${{ steps.cfg.outputs.project_slug }}
-          env-slug: dev
+          env-slug: prod
           secret-path: ${{ steps.cfg.outputs.secret_path }}
+          domain: https://app.infisical.com
           export-type: env
       - name: Set up Node (pinned)
         if: steps.cfg.outputs.provisioned == 'true'
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22.19.0"
       - name: Install the pinned Kilo CLI into a temp prefix
@@ -131,7 +132,7 @@ jobs:
             --out "$OUT/receipt.json"
       - name: Upload the advisory receipt
         if: steps.cfg.outputs.provisioned == 'true' && always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: kilo-canary-receipt-live-advisory
           path: ${{ runner.temp }}/kilo-canary/receipt.json
