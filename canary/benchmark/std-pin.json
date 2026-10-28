@@ -1,0 +1,9 @@
+{
+  "commit": "e397784d1358524bd507d71fb3f6b1fd336005e1",
+  "files": {
+    "Canonical/corpus/clean-room-benchmark/benchmark.json": "sha256:f643f06e91043b422f4f5faf50c9bba885fe2ed1701a44d9ba44108d44168a9d",
+    "Canonical/corpus/clean-room-benchmark/trial.schema.json": "sha256:1cf854a7185247f4ceb70cafc1cfa5a5f89774ab0a2d7fd0e479c0f1f7c71435",
+    "tools/clean_room_benchmark.py": "sha256:17e530cf0fe2c0b9fc45a78551bf71059c768704d78dce4c7e074ccaa721f38e",
+    "tools/handoff_acceptance.py": "sha256:b9858aa516a600d207ae73a86bf0c2113364b5f17c53a7d5cd0ed085c120e877"
+  }
+}
