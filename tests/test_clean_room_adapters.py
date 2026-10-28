@@ -394,10 +394,11 @@ def test_files_touched_is_the_workspace_diff_for_add_change_and_remove(name, tmp
     _fake_on_path(monkeypatch, tmp_path, name, extra_sh=shell)
     clean_home = _clean_home(tmp_path)
     workspace = clean_home / "workspace"
-    driver = _driver(name)
-    driver.prepare(CHECKPOINT, clean_home)
-    (workspace / "changed.txt").write_text("old\n", encoding="utf-8")
+    workspace.mkdir()
+    (workspace / "changed.txt").write_text("old\n", encoding="utf-8")  # present before prepare
     (workspace / "gone.txt").write_text("bye\n", encoding="utf-8")
+    driver = _driver(name)
+    driver.prepare(CHECKPOINT, clean_home)  # snapshots the seeded tree
     driver.run(_model())
     observation = driver.collect()
     assert observation["files_touched"] == sorted(
