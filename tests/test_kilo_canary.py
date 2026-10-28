@@ -413,6 +413,17 @@ def test_receipt_whose_process_group_survived_the_exit_fails_the_cancel():
     assert _judge_with_receipt(receipt)["verdict"] == "fail"
 
 
+def test_receipt_whose_returncode_differs_from_the_observed_one_fails_the_cancel():
+    receipt = _launcher_receipt(returncode=-15)
+    assert _judge_with_receipt(receipt, returncode=-2)["verdict"] == "fail"
+
+
+def test_receipt_not_issued_by_the_launcher_or_not_acknowledging_fails_the_cancel():
+    for field, value in (("issuer", "kilo"), ("verdict", "gap")):
+        receipt = dict(_launcher_receipt(), **{field: value})
+        assert _judge_with_receipt(receipt)["verdict"] == "fail", field
+
+
 def test_receipt_reporting_a_successful_stop_fails_the_cancel():
     events = _events("cancel_events.jsonl") + [{
         "type": "step_finish", "sessionID": "ses_x",

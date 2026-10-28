@@ -69,9 +69,15 @@ Tests:
   model received, a different model process, and an identical final workspace
   hash. "Same receipt" means the same session id and the same workspace state.
 - **cancel**: a streaming run is interrupted with SIGINT once three chunks have
-  streamed. SIGTERM, then SIGKILL, follow after 5 s grace each. A run that
-  terminates with no acknowledgment event is a **gap** (`cancel-ack`), never a
-  pass. A cancelled run reported as a successful stop is a fail.
+  streamed. SIGTERM, then SIGKILL, follow after 5 s grace each. Because Kilo
+  emits no cancellation event, the launcher (`Runner.run_cancel`) issues its own
+  receipt (`evidence.launcher_receipt`, verdict `cancelled-acknowledged`, issuer
+  `launcher`, #92): the signals sent, the process-group exit status (terminated,
+  returncode, group empty after exit), elapsed time, and a byte-exact workspace
+  snapshot before and after the cancel point with any `partial_effects`. The
+  scenario passes only on a consistent launcher receipt (`acknowledged_by:
+  launcher`); without one it stays a **gap**, never a pass. A cancelled run
+  reported as a successful stop is a fail.
 
 ## Findings from the real CLI (7.8.10)
 
@@ -83,8 +89,9 @@ Tests:
 - Cold resume works: `kilo run --session <id>` in a new process continues the
   same session, and the prior messages are in the request.
 - SIGINT and SIGTERM end the run at once. The event stream holds only the
-  `step_start` event; there is no cancellation event. This is why `cancel-ack`
-  stays a gap.
+  `step_start` event; there is no cancellation event. This is why the
+  upstream `cancel-ack` gap stays declared even when the launcher receipt passes
+  the scenario. If a later pinned Kilo emits one, its event wins first.
 
 ## Declared gaps
 
