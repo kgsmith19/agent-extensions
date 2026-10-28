@@ -1,0 +1,14 @@
+[
+  {
+    "path": "allowed.txt",
+    "sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
+  },
+  {
+    "path": "notes.txt",
+    "sha256": "822340c8166fd6f298fac84fe9a054b28cedaf759bca25735c09bc3bfc717543"
+  },
+  {
+    "path": "partial.txt",
+    "sha256": "95aebb28195b8d737effe0df18d71d39c8d8ba6569286fd3930fbc9f9767181e"
+  }
+]
