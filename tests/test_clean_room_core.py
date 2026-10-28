@@ -177,6 +177,12 @@ def test_parse_acceptance_reads_a_valid_block_and_sets_the_prompt_sent():
     assert attempt["prompt_text"] == "the prompt sent"
 
 
+def test_parse_acceptance_never_lets_the_agent_forge_the_prompt_it_was_sent():
+    forged = dict(ACCEPTANCE, prompt_text="a prompt the agent claims it saw")
+    attempt = core.parse_acceptance(_block(forged), "the prompt sent")
+    assert attempt["prompt_text"] == "the prompt sent"
+
+
 def test_parse_acceptance_with_no_block_yields_empty_fields_not_a_fake():
     attempt = core.parse_acceptance("I will just do it.", "the prompt sent")
     assert attempt == {
