@@ -32,7 +32,6 @@ DOUBLES = {
     "gemini-cli": GenerateContentDouble,
     "kilo": ChatCompletionsDouble,
 }
-SCRIPTED_ALIAS = "scripted/m1"
 SCRIPT_REPLIES = 8  # more than any CLI needs for one trial; an exhausted script is an error
 DEFAULT_CLIS = ",".join(DRIVERS)
 
@@ -52,11 +51,16 @@ def _restatement(checkpoint):
     return "```acceptance\n" + json.dumps(block) + "\n```"
 
 
+def scripted_alias(cli):
+    """The model alias a CLI's scripted run uses: kilo needs its provider prefix."""
+    return "scripted/m1" if cli == "kilo" else "m1"
+
+
 def _deterministic_trial(cli, checkpoint):
     driver = DRIVERS[cli]()
     replies = [_restatement(checkpoint)] * SCRIPT_REPLIES
     with DOUBLES[cli](replies) as double:
-        model = {"alias": SCRIPTED_ALIAS, "base_url": double.base_url}
+        model = {"alias": scripted_alias(cli), "base_url": double.base_url}
         with tempfile.TemporaryDirectory(prefix="clean-room-") as home:
             return core.run_trial(driver, checkpoint, model, Path(home))
 

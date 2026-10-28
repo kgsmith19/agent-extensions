@@ -391,6 +391,16 @@ def test_the_live_lane_file_has_exactly_the_amended_shape():
     }
 
 
+def test_each_cli_gets_a_model_alias_its_wire_route_accepts():
+    from canary.benchmark import __main__ as runner
+
+    # gemini's route is /v1beta/models/{m}:streamGenerateContent, so its alias is one segment;
+    # kilo needs the provider-prefixed alias its config renders.
+    assert "/" not in runner.scripted_alias("gemini-cli")
+    assert runner.scripted_alias("kilo") == "scripted/m1"
+    assert runner.scripted_alias("claude-code") == runner.scripted_alias("codex") == "m1"
+
+
 def _run_runner(args, path_dirs, cwd=REPO_ROOT):
     env = {"PATH": os.pathsep.join([*map(str, path_dirs), "/usr/bin", "/bin"])}
     return subprocess.run([sys.executable, "-m", "canary.benchmark", *args],
