@@ -55,13 +55,19 @@ jobs:
             exit 1
           fi
 
-      # Installation-token minting is not wired yet (see ext#97 open question:
-      # RS256 signing needs a crypto dependency or an openssl step). Until a token
-      # is provided as GH_TOKEN, the module refuses to run and nothing is written.
+      - name: Mint the settings App installation token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ env.SETTINGS_APP_ID }}
+          private-key: ${{ env.SETTINGS_APP_PRIVATE_KEY }}
+          owner: kgsmith19
+          repositories: agent-engineering-standard,hyperbolic-core,agent-extensions
 
       - name: Reconcile declared settings (dry-run unless mode=apply)
         env:
           MODE: ${{ inputs.mode }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
           extra=""

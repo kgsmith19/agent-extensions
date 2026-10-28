@@ -146,10 +146,12 @@ def _validate_label(where: str, label: Any) -> Dict[str, Any]:
         _fail(where, "label name has disallowed characters")
     if not isinstance(label["color"], str) or not COLOR_RE.match(label["color"]):
         _fail(where, f"label color {label['color']!r} must be 6 hex digits")
-    description = label.get("description", "")
-    if not isinstance(description, str):
-        _fail(where, "label description must be a string")
-    return {"name": label["name"], "color": label["color"], "description": description}
+    out = {"name": label["name"], "color": label["color"]}
+    if "description" in label:
+        if not isinstance(label["description"], str):
+            _fail(where, "label description must be a string")
+        out["description"] = label["description"]
+    return out
 
 
 def _validate_block(where: str, block: Any) -> Dict[str, Any]:
@@ -303,7 +305,8 @@ def plan(declared: Dict[str, Any], live: Dict[str, Any]) -> List[Change]:
             op = "create"
         elif (
             have["color"].lower() == label["color"].lower()
-            and (have.get("description") or "") == label.get("description", "")
+            and ("description" not in label
+                 or (have.get("description") or "") == label["description"])
         ):
             op = "same"
         else:
@@ -367,9 +370,8 @@ def apply_changes(
                 _check_status("POST", path, status)
             else:
                 path = f"{base}/labels/{quote(live_labels[key]['name'], safe='')}"
-                status, _ = api.request(
-                    "PATCH", path, {"color": want["color"], "description": want["description"]}
-                )
+                # An undeclared description is left as it is live.
+                status, _ = api.request("PATCH", path, {k: v for k, v in want.items() if k != "name"})
                 _check_status("PATCH", path, status)
         elif c.kind == "variable":
             value = declared["variables"][c.name]

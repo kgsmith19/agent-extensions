@@ -15,16 +15,16 @@
       },
       "rulesets": [],
       "labels": [
-        {"name": "status:ready", "color": "0e8a16", "description": ""},
-        {"name": "status:active", "color": "1d76db", "description": ""},
-        {"name": "status:blocked", "color": "b60205", "description": ""},
-        {"name": "risk:R0", "color": "c2e0c6", "description": ""},
-        {"name": "risk:R1", "color": "bfdadc", "description": ""},
-        {"name": "risk:R2", "color": "f9d0c4", "description": ""},
-        {"name": "risk:R3", "color": "e99695", "description": ""},
-        {"name": "owner:allow-draft", "color": "5319e7", "description": ""},
-        {"name": "owner:hold-merge", "color": "5319e7", "description": ""},
-        {"name": "owner:policy-change", "color": "5319e7", "description": ""}
+        {"name": "status:ready", "color": "0e8a16"},
+        {"name": "status:active", "color": "1d76db"},
+        {"name": "status:blocked", "color": "b60205"},
+        {"name": "risk:R0", "color": "c2e0c6"},
+        {"name": "risk:R1", "color": "bfdadc"},
+        {"name": "risk:R2", "color": "f9d0c4"},
+        {"name": "risk:R3", "color": "e99695"},
+        {"name": "owner:allow-draft", "color": "5319e7"},
+        {"name": "owner:hold-merge", "color": "5319e7"},
+        {"name": "owner:policy-change", "color": "5319e7"}
       ],
       "variables": {}
     },
@@ -42,16 +42,16 @@
       },
       "rulesets": [],
       "labels": [
-        {"name": "status:ready", "color": "0e8a16", "description": ""},
-        {"name": "status:active", "color": "1d76db", "description": ""},
-        {"name": "status:blocked", "color": "b60205", "description": ""},
-        {"name": "risk:R0", "color": "c2e0c6", "description": ""},
-        {"name": "risk:R1", "color": "bfdadc", "description": ""},
-        {"name": "risk:R2", "color": "f9d0c4", "description": ""},
-        {"name": "risk:R3", "color": "e99695", "description": ""},
-        {"name": "owner:allow-draft", "color": "5319e7", "description": ""},
-        {"name": "owner:hold-merge", "color": "5319e7", "description": ""},
-        {"name": "owner:policy-change", "color": "5319e7", "description": ""}
+        {"name": "status:ready", "color": "0e8a16"},
+        {"name": "status:active", "color": "1d76db"},
+        {"name": "status:blocked", "color": "b60205"},
+        {"name": "risk:R0", "color": "c2e0c6"},
+        {"name": "risk:R1", "color": "bfdadc"},
+        {"name": "risk:R2", "color": "f9d0c4"},
+        {"name": "risk:R3", "color": "e99695"},
+        {"name": "owner:allow-draft", "color": "5319e7"},
+        {"name": "owner:hold-merge", "color": "5319e7"},
+        {"name": "owner:policy-change", "color": "5319e7"}
       ],
       "variables": {}
     },
@@ -69,16 +69,16 @@
       },
       "rulesets": [],
       "labels": [
-        {"name": "status:ready", "color": "0e8a16", "description": ""},
-        {"name": "status:active", "color": "1d76db", "description": ""},
-        {"name": "status:blocked", "color": "b60205", "description": ""},
-        {"name": "risk:R0", "color": "c2e0c6", "description": ""},
-        {"name": "risk:R1", "color": "bfdadc", "description": ""},
-        {"name": "risk:R2", "color": "f9d0c4", "description": ""},
-        {"name": "risk:R3", "color": "e99695", "description": ""},
-        {"name": "owner:allow-draft", "color": "5319e7", "description": ""},
-        {"name": "owner:hold-merge", "color": "5319e7", "description": ""},
-        {"name": "owner:policy-change", "color": "5319e7", "description": ""}
+        {"name": "status:ready", "color": "0e8a16"},
+        {"name": "status:active", "color": "1d76db"},
+        {"name": "status:blocked", "color": "b60205"},
+        {"name": "risk:R0", "color": "c2e0c6"},
+        {"name": "risk:R1", "color": "bfdadc"},
+        {"name": "risk:R2", "color": "f9d0c4"},
+        {"name": "risk:R3", "color": "e99695"},
+        {"name": "owner:allow-draft", "color": "5319e7"},
+        {"name": "owner:hold-merge", "color": "5319e7"},
+        {"name": "owner:policy-change", "color": "5319e7"}
       ],
       "variables": {}
     }

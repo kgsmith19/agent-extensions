@@ -311,3 +311,37 @@ def test_workflow_permissions_fail_closed_and_no_pat():
     assert "settings App not provisioned (see ext#97)" in text
     for uses in re.findall(r"^\s*-?\s*uses:\s*(\S+)", text, re.M):
         assert re.search(r"@[0-9a-f]{40}\b", uses), f"action not pinned to a SHA: {uses}"
+
+
+def test_workflow_mints_the_app_token_and_passes_it_as_gh_token():
+    """The reconcile step gets a settings-App installation token, never a PAT.
+
+    Catches the apply step running with no token (the module then refuses)
+    or with a long-lived credential instead of a minted installation token.
+    """
+    text = (REPO_ROOT / ".github/workflows/apply-github-settings.yml").read_text(encoding="utf-8")
+    mint = re.search(
+        r"id:\s*app-token\s*\n\s*uses:\s*actions/create-github-app-token@[0-9a-f]{40}", text)
+    assert mint, "settings App token must be minted by the pinned create-github-app-token action"
+    reconcile = text.split("Reconcile declared settings", 1)[1]
+    assert "GH_TOKEN: ${{ steps.app-token.outputs.token }}" in reconcile
+
+
+def test_undeclared_label_description_is_left_untouched():
+    """A label declared without a description never blanks the live one.
+
+    Catches apply PATCHing description="" over an existing description when
+    only the color drifted, or reporting drift when only the description is
+    set live.
+    """
+    doc = {"schema_version": 1,
+           "repos": {REPO: {"labels": [{"name": "status:ready", "color": "0e8a16"}]}}}
+    declared = gs.validate(doc)["repos"][REPO]
+    fake = FakeGitHub(labels=[{"name": "status:ready", "color": "0e8a16", "description": "Live text"}])
+    assert all(c.op == "same" for c in gs.run_sync(fake, REPO, declared, apply=True))
+    assert fake.writes() == []
+
+    fake = FakeGitHub(labels=[{"name": "status:ready", "color": "ffffff", "description": "Live text"}])
+    gs.run_sync(fake, REPO, declared, apply=True)
+    patches = [p for m, _, p in fake.writes() if m == "PATCH"]
+    assert patches == [{"color": "0e8a16"}], patches
