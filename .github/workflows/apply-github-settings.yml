@@ -1,0 +1,78 @@
+name: Apply GitHub settings
+
+# ext#97: owner-dispatched reconciliation of declared repo settings, labels and
+# Actions variables (settings/github-settings.json). Dispatch-only. Dry-run unless
+# mode=apply. Never deletes live-only items. Uses a settings-only GitHub App via
+# Infisical OIDC; no PAT anywhere. Fails closed until the App is provisioned.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run prints planned changes; apply performs them"
+        type: choice
+        options:
+          - dry-run
+          - apply
+        default: dry-run
+
+permissions: {}
+
+jobs:
+  settings:
+    name: Reconcile GitHub settings
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout (pinned)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python (pinned)
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Fetch settings App credentials (Infisical OIDC)
+        if: vars.INFISICAL_SETTINGS_IDENTITY_ID != ''
+        uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16
+        with:
+          method: oidc
+          identity-id: ${{ vars.INFISICAL_SETTINGS_IDENTITY_ID }}
+          project-slug: ${{ vars.INFISICAL_PROJECT_SLUG }}
+          env-slug: prod
+          secret-path: /settings-app/
+          domain: https://app.infisical.com
+          export-type: env
+
+      - name: Fail closed unless the settings App is provisioned
+        run: |
+          if [ -z "${SETTINGS_APP_ID:-}" ] || [ -z "${SETTINGS_APP_PRIVATE_KEY:-}" ]; then
+            echo "::error::settings App not provisioned (see ext#97)"
+            exit 1
+          fi
+
+      - name: Mint the settings App installation token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ env.SETTINGS_APP_ID }}
+          private-key: ${{ env.SETTINGS_APP_PRIVATE_KEY }}
+          owner: kgsmith19
+          repositories: agent-engineering-standard,hyperbolic-core,agent-extensions
+
+      - name: Reconcile declared settings (dry-run unless mode=apply)
+        env:
+          MODE: ${{ inputs.mode }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          extra=""
+          if [ "$MODE" = "apply" ]; then extra="--apply"; fi
+          for repo in kgsmith19/agent-engineering-standard kgsmith19/hyperbolic-core kgsmith19/agent-extensions; do
+            echo "== $repo ($MODE)"
+            python3 -m agent_extensions.sync.github_settings --repo "$repo" --settings settings/github-settings.json $extra
+          done
