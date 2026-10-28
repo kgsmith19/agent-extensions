@@ -309,12 +309,12 @@ def _fixture_list(name):
 
 def _receipt_inputs(**overrides):
     """Kwargs for rc.cancel_receipt describing a clean SIGINT that emptied the group."""
-    base = dict(signal_sent="SIGINT",
-                signals=[{"signal": "SIGINT", "sent_at_ms": 0, "exited_after_ms": 412}],
-                pgid=12345, returncode=-2, terminated=True, group_empty_after_exit=True,
-                elapsed_ms=412, last_event={"type": "step_start", "sessionID": "ses_x"},
-                streamed_chunks=6, client_disconnected=True,
-                before=_fixture_list(BEFORE_FIXTURE), after=_fixture_list(BEFORE_FIXTURE))
+    base = {"signal_sent": "SIGINT",
+            "signals": [{"signal": "SIGINT", "sent_at_ms": 0, "exited_after_ms": 412}],
+            "pgid": 12345, "returncode": -2, "terminated": True, "group_empty_after_exit": True,
+            "elapsed_ms": 412, "last_event": {"type": "step_start", "sessionID": "ses_x"},
+            "streamed_chunks": 6, "client_disconnected": True,
+            "before": _fixture_list(BEFORE_FIXTURE), "after": _fixture_list(BEFORE_FIXTURE)}
     base.update(overrides)
     return base
 
@@ -324,8 +324,8 @@ def _launcher_receipt(**overrides):
 
 
 def _judge_with_receipt(receipt, **overrides):
-    args = dict(terminated=True, returncode=-2, sent_signal="SIGINT", streamed_chunks=6,
-                launcher_receipt=receipt)
+    args = {"terminated": True, "returncode": -2, "sent_signal": "SIGINT", "streamed_chunks": 6,
+            "launcher_receipt": receipt}
     args.update(overrides)
     return rc.judge_cancel(_events("cancel_events.jsonl"), **args)
 
