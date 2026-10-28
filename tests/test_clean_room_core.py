@@ -325,6 +325,21 @@ def test_redaction_removes_api_key_shapes_from_a_gap_reason(std_tree, tmp_path):
     assert core.redact("plain text") == "plain text"
 
 
+def test_redaction_also_covers_github_tokens_and_bearer_jwts():
+    # A live-lane CLI can echo an Infisical access token (a JWT) or a GitHub
+    # token on stderr; none of it may reach a recorded gap reason.
+    leaked = {
+        "ghp": "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8",
+        "gho": "gho_" + "Z9y8X7w6V5u4T3s2R1q0P9o8N7m6L5k4J3i2",
+        "pat": "github_pat_" + "11ABCDEFG0123456789_abcdefghijklmnopqrstuvwxyz",
+        "jwt": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJlLXNlY3JldA",
+    }
+    for name, secret in leaked.items():
+        redacted = core.redact(f"Authorization: Bearer {secret} failed")
+        assert secret not in redacted, name
+        assert "[REDACTED]" in redacted, name
+
+
 # --- status records and gaps -----------------------------------------------------
 
 
