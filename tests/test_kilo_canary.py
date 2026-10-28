@@ -7,6 +7,7 @@ against a real pinned CLI and is skipped unless KILO_BIN names its binary.
 
 import argparse
 import copy
+import hashlib
 import json
 import os
 import re
@@ -296,17 +297,182 @@ def test_cancel_that_never_streamed_is_not_exercised_and_fails():
     assert verdict["verdict"] == "fail"
 
 
+# --- launcher-side acknowledged-cancel receipt (#92) ----------------------------------
+
+BEFORE_FIXTURE = "cancel_receipt_before.json"
+AFTER_FIXTURE = "cancel_receipt_after.json"
+
+
+def _fixture_list(name):
+    return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+
+
+def _receipt_inputs(**overrides):
+    """Kwargs for rc.cancel_receipt describing a clean SIGINT that emptied the group."""
+    base = {"signal_sent": "SIGINT",
+            "signals": [{"signal": "SIGINT", "sent_at_ms": 0, "exited_after_ms": 412}],
+            "pgid": 12345, "returncode": -2, "terminated": True, "group_empty_after_exit": True,
+            "elapsed_ms": 412, "last_event": {"type": "step_start", "sessionID": "ses_x"},
+            "streamed_chunks": 6, "client_disconnected": True,
+            "before": _fixture_list(BEFORE_FIXTURE), "after": _fixture_list(BEFORE_FIXTURE)}
+    base.update(overrides)
+    return base
+
+
+def _launcher_receipt(**overrides):
+    return rc.cancel_receipt(**_receipt_inputs(**overrides))
+
+
+def _judge_with_receipt(receipt, **overrides):
+    args = {"terminated": True, "returncode": -2, "sent_signal": "SIGINT", "streamed_chunks": 6,
+            "launcher_receipt": receipt}
+    args.update(overrides)
+    return rc.judge_cancel(_events("cancel_events.jsonl"), **args)
+
+
+def test_cancel_receipt_is_issued_by_the_launcher_and_acknowledges_the_cancel():
+    receipt = _launcher_receipt()
+    assert receipt["verdict"] == "cancelled-acknowledged"
+    assert receipt["issuer"] == "launcher"
+    assert receipt["kilo_cancel_event"] is None
+    assert receipt["signal_sent"] == "SIGINT"
+    assert receipt["signals"] == [{"signal": "SIGINT", "sent_at_ms": 0, "exited_after_ms": 412}]
+    assert receipt["process_group"] == {"pgid": 12345, "returncode": -2, "terminated": True,
+                                        "group_empty_after_exit": True}
+    assert receipt["elapsed_ms"] == 412
+    assert receipt["last_event"] == {"type": "step_start", "sessionID": "ses_x"}
+    assert receipt["streamed_chunks"] == 6
+    assert receipt["client_disconnected"] is True
+
+
+def test_cancel_receipt_with_an_unchanged_workspace_lists_no_partial_effects():
+    before = _fixture_list(BEFORE_FIXTURE)
+    receipt = _launcher_receipt(before=before, after=list(before))
+    assert receipt["workspace_unchanged"] is True
+    assert receipt["partial_effects"] == []
+
+
+def test_cancel_receipt_lists_files_changed_after_the_cancel_point_as_partial_effects():
+    receipt = _launcher_receipt(before=_fixture_list(BEFORE_FIXTURE),
+                                after=_fixture_list(AFTER_FIXTURE))
+    assert receipt["workspace_unchanged"] is False
+    assert [e["path"] for e in receipt["partial_effects"]] == ["notes.txt", "partial.txt"]
+
+
+def test_cancel_receipt_lists_a_file_removed_after_the_cancel_point():
+    before = _fixture_list(BEFORE_FIXTURE)
+    receipt = _launcher_receipt(before=before, after=before[1:])
+    assert receipt["workspace_unchanged"] is False
+    assert [e["path"] for e in receipt["partial_effects"]] == ["allowed.txt"]
+
+
+def test_workspace_hashes_are_byte_exact_and_sorted_by_path(tmp_path):
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "b.txt").write_bytes(b"hello\n")
+    (tmp_path / "sub" / "a.bin").write_bytes(b"\xff\xfe\x00")
+    assert rc.workspace_hashes(tmp_path) == [
+        {"path": "b.txt", "sha256": hashlib.sha256(b"hello\n").hexdigest()},
+        {"path": "sub/a.bin", "sha256": hashlib.sha256(b"\xff\xfe\x00").hexdigest()}]
+
+
+def test_cancel_with_a_consistent_launcher_receipt_passes_on_the_launcher():
+    verdict = _judge_with_receipt(_launcher_receipt())
+    assert verdict["verdict"] == "pass", verdict
+    assert verdict["evidence"]["acknowledged_by"] == "launcher"
+
+
+def test_cancel_with_an_explicit_none_receipt_is_still_a_gap():
+    verdict = rc.judge_cancel(_events("cancel_events.jsonl"), terminated=True, returncode=-2,
+                              sent_signal="SIGINT", streamed_chunks=6, launcher_receipt=None)
+    assert verdict["verdict"] == "gap"
+    assert verdict["gap_id"] == "cancel-ack"
+
+
+def test_kilo_acknowledgment_still_wins_over_the_launcher_receipt():
+    events = _events("cancel_events.jsonl") + [{
+        "type": "step_finish", "sessionID": "ses_x",
+        "part": {"type": "step-finish", "reason": "cancelled"}}]
+    verdict = rc.judge_cancel(events, terminated=True, returncode=-2, sent_signal="SIGINT",
+                              streamed_chunks=6, launcher_receipt=_launcher_receipt())
+    assert verdict["verdict"] == "pass"
+    assert verdict["evidence"]["acknowledged_by"] == "kilo"
+
+
+def test_receipt_that_says_the_process_still_runs_fails_the_cancel():
+    receipt = _launcher_receipt(terminated=False)
+    assert _judge_with_receipt(receipt)["verdict"] == "fail"
+
+
+def test_receipt_for_a_different_signal_than_sent_fails_the_cancel():
+    receipt = _launcher_receipt(signal_sent="SIGTERM")
+    assert _judge_with_receipt(receipt, sent_signal="SIGINT")["verdict"] == "fail"
+
+
+def test_receipt_whose_process_group_survived_the_exit_fails_the_cancel():
+    receipt = _launcher_receipt(group_empty_after_exit=False)
+    assert _judge_with_receipt(receipt)["verdict"] == "fail"
+
+
+def test_receipt_whose_returncode_differs_from_the_observed_one_fails_the_cancel():
+    receipt = _launcher_receipt(returncode=-15)
+    assert _judge_with_receipt(receipt, returncode=-2)["verdict"] == "fail"
+
+
+def test_receipt_not_issued_by_the_launcher_or_not_acknowledging_fails_the_cancel():
+    for field, value in (("issuer", "kilo"), ("verdict", "gap")):
+        receipt = dict(_launcher_receipt(), **{field: value})
+        assert _judge_with_receipt(receipt)["verdict"] == "fail", field
+
+
+def test_receipt_reporting_a_successful_stop_fails_the_cancel():
+    events = _events("cancel_events.jsonl") + [{
+        "type": "step_finish", "sessionID": "ses_x",
+        "part": {"type": "step-finish", "reason": "stop"}}]
+    receipt = _launcher_receipt(returncode=0)
+    verdict = rc.judge_cancel(events, terminated=True, returncode=0, sent_signal="SIGINT",
+                              streamed_chunks=6, launcher_receipt=receipt)
+    assert verdict["verdict"] == "fail"
+
+
+def test_launcher_receipt_keeps_cancel_ack_declared_as_a_gap_in_the_receipt():
+    receipt = _receipt(cancel=_judge_with_receipt(_launcher_receipt()))
+    assert receipt["scenarios"]["cancel"]["verdict"] == "pass"
+    assert "cancel-ack" in {gap["id"] for gap in receipt["gaps"]}
+    assert rc.validate_receipt(receipt) == []
+    assert rc.receipt_verdict(receipt) == "gap"
+
+
+def test_run_scenarios_stores_the_launcher_receipt_as_cancel_evidence(tmp_path):
+    receipt = _launcher_receipt()
+
+    class FakeRunner:
+        def run_turn(self, name, tag, **_kwargs):
+            return {"events": [], "returncode": 0, "workspace": str(tmp_path),
+                    "session_id": None, "requests": [], "server_pid": None}
+
+        def run_cancel(self, name, *, message):
+            return {"events": _events("cancel_events.jsonl"), "terminated": True,
+                    "returncode": -2, "sent_signal": "SIGINT", "streamed_chunks": 6,
+                    "client_disconnected": True, "workspace": str(tmp_path),
+                    "launcher_receipt": receipt}
+
+    results, _cancel = rc.run_scenarios(FakeRunner())
+    assert results["cancel"]["verdict"] == "pass", results["cancel"]
+    assert results["cancel"]["evidence"]["launcher_receipt"] == receipt
+
+
 # --- provenance, receipt shape, gaps ---------------------------------------------------
 
 
-def _receipt(**overrides):
+def _receipt(cancel=None, **overrides):
     scenarios = {
         "allow": rc.judge_allow(_events("allow_events.jsonl"), {"allowed.txt": "hello\n"}),
         "deny": rc.judge_deny(_events("deny_events.jsonl"), {}, filename="forbidden.txt",
                               permission="edit"),
         "resume": rc.judge_resume(**_resume_args()),
-        "cancel": rc.judge_cancel(_events("cancel_events.jsonl"), terminated=True,
-                                  returncode=-2, sent_signal="SIGINT", streamed_chunks=6),
+        "cancel": cancel or rc.judge_cancel(_events("cancel_events.jsonl"), terminated=True,
+                                            returncode=-2, sent_signal="SIGINT",
+                                            streamed_chunks=6),
     }
     args = dict(kilo_version="7.8.10", parser_entry={"package": "@kilocode/cli@7.8.10"},
                 launcher_entry={"binary": "/x/bin/kilo"}, node_version="v22.19.0",
@@ -435,7 +601,10 @@ def test_full_canary_against_the_real_cli(tmp_path):
     assert receipt["scenarios"]["allow"]["verdict"] == "pass"
     assert receipt["scenarios"]["deny"]["verdict"] == "pass"
     assert receipt["scenarios"]["resume"]["verdict"] == "pass"
-    assert receipt["scenarios"]["cancel"]["verdict"] == "gap"
+    cancel = receipt["scenarios"]["cancel"]
+    assert cancel["verdict"] == "pass"
+    assert cancel["evidence"]["launcher_receipt"]["issuer"] == "launcher"
+    assert "cancel-ack" in {gap["id"] for gap in receipt["gaps"]}
     assert rc.receipt_verdict(receipt) == "gap"
 
 

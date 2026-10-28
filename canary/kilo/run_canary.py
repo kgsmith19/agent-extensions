@@ -226,8 +226,86 @@ def judge_resume(*, run1_events, run2_events, run1_session, run2_session_request
     return _pass("cold resume continued the same session with identical final state", **evidence)
 
 
-def judge_cancel(events, *, terminated, returncode, sent_signal, streamed_chunks):
-    """Mid-stream cancel. Pass needs an explicit acknowledgment event; none is a gap."""
+def workspace_hashes(workspace):
+    """Byte-exact sha256 of every regular file under the workspace, sorted by path."""
+    hashes = []
+    for root, _dirs, files in os.walk(workspace):
+        for name in files:
+            full = os.path.join(root, name)
+            rel = os.path.relpath(full, workspace).replace(os.sep, "/")
+            with open(full, "rb") as fh:
+                hashes.append({"path": rel, "sha256": hashlib.sha256(fh.read()).hexdigest()})
+    return sorted(hashes, key=lambda entry: entry["path"])
+
+
+def _elapsed_ms(started):
+    return int((time.monotonic() - started) * 1000)
+
+
+def _group_empty(pgid):
+    """True once no process remains in the process group (signal 0 probes it)."""
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return True
+    return False
+
+
+def _partial_effects(before, after):
+    """Paths whose content differs between the two snapshots, including adds and removals."""
+    old = {entry["path"]: entry["sha256"] for entry in before}
+    new = {entry["path"]: entry["sha256"] for entry in after}
+    return [{"path": path, "before": old.get(path), "after": new.get(path)}
+            for path in sorted(set(old) | set(new)) if old.get(path) != new.get(path)]
+
+
+def cancel_receipt(*, signal_sent, signals, pgid, returncode, terminated, group_empty_after_exit,
+                   elapsed_ms, last_event, streamed_chunks, client_disconnected, before, after):
+    """The launcher's own record of a cancel it sent. Pure: shapes data, does no I/O."""
+    partial = _partial_effects(before, after)
+    return {
+        "verdict": "cancelled-acknowledged",
+        "issuer": "launcher",
+        "issuer_component": "canary/kilo/run_canary.py:Runner.run_cancel",
+        "signal_sent": signal_sent,
+        "signals": signals,
+        "process_group": {"pgid": pgid, "returncode": returncode, "terminated": terminated,
+                          "group_empty_after_exit": group_empty_after_exit},
+        "elapsed_ms": elapsed_ms,
+        "last_event": last_event,
+        "streamed_chunks": streamed_chunks,
+        "client_disconnected": client_disconnected,
+        "workspace_before": before,
+        "workspace_after": after,
+        "workspace_unchanged": not partial,
+        "partial_effects": partial,
+        "kilo_cancel_event": None,
+    }
+
+
+def _receipt_problems(receipt, *, terminated, returncode, sent_signal):
+    """Why a launcher receipt cannot back a pass. Empty when it is consistent."""
+    group = receipt.get("process_group") or {}
+    problems = []
+    if receipt.get("issuer") != "launcher" or receipt.get("verdict") != "cancelled-acknowledged":
+        problems.append("not a launcher-issued cancelled-acknowledged receipt")
+    if not terminated or group.get("terminated") is not True:
+        problems.append("the process did not terminate")
+    if group.get("group_empty_after_exit") is not True:
+        problems.append("the process group was not empty after exit")
+    if receipt.get("signal_sent") != sent_signal:
+        problems.append(f"receipt signal {receipt.get('signal_sent')} != sent {sent_signal}")
+    if group.get("returncode") != returncode:
+        problems.append(f"receipt returncode {group.get('returncode')} != {returncode}")
+    if receipt.get("workspace_unchanged") != (not receipt.get("partial_effects")):
+        problems.append("workspace_unchanged disagrees with partial_effects")
+    return problems
+
+
+def judge_cancel(events, *, terminated, returncode, sent_signal, streamed_chunks,
+                 launcher_receipt=None):
+    """Mid-stream cancel. Kilo's own acknowledgment passes first. Otherwise the launcher's
+    consistent receipt passes. With neither, the cancel is a gap."""
     types = [e.get("type") for e in events]
     evidence = {"terminated": terminated, "returncode": returncode, "sent_signal": sent_signal,
                 "streamed_chunks": streamed_chunks, "event_types": types,
@@ -244,8 +322,18 @@ def judge_cancel(events, *, terminated, returncode, sent_signal, streamed_chunks
            and (e.get("part") or {}).get("reason") in ACK_REASONS]
     if ack:
         evidence["acknowledged"] = True
+        evidence["acknowledged_by"] = "kilo"
         evidence["ack_event"] = ack[-1]
         return _pass("cancellation acknowledged by Kilo", **evidence)
+    if launcher_receipt is not None:
+        problems = _receipt_problems(launcher_receipt, terminated=terminated,
+                                     returncode=returncode, sent_signal=sent_signal)
+        if problems:
+            return _fail("launcher receipt is inconsistent: " + "; ".join(problems), **evidence)
+        evidence["acknowledged"] = True
+        evidence["acknowledged_by"] = "launcher"
+        return _pass("cancellation acknowledged by the launcher receipt; Kilo writes no"
+                     " cancel event", **evidence)
     return {"verdict": "gap", "gap_id": "cancel-ack",
             "reason": ("Kilo writes no cancellation acknowledgment; the run was observed"
                        f" terminated (returncode {returncode}, {sent_signal}) and is recorded"
@@ -272,6 +360,12 @@ def build_receipt(*, kilo_version, parser_entry, launcher_entry, node_version, p
         if scenario.get("verdict") == "gap":
             gaps.append({"id": scenario["gap_id"], "scenario": name,
                          "reason": scenario["reason"]})
+    cancel = scenarios.get("cancel") or {}
+    if (cancel.get("verdict") == "pass"
+            and (cancel.get("evidence") or {}).get("acknowledged_by") == "launcher"):
+        gaps.append({"id": "cancel-ack", "scenario": "cancel",
+                     "reason": "Kilo 7.8.10 writes no cancel event; the launcher receipt"
+                               " acknowledges the cancel instead"})
     return {
         "canary": CANARY,
         "kilo_version": kilo_version,
@@ -551,17 +645,27 @@ class Runner:
                                         start_new_session=True)
                 if model_log:
                     self._wait_streaming(model_log, 3, 60)
+                before = workspace_hashes(workspace)
+                started = time.monotonic()
+                signals = []
                 for sig, grace in ((signal.SIGINT, 5), (signal.SIGTERM, 5), (signal.SIGKILL, 5)):
                     if kilo.poll() is not None:
                         break
                     result["sent_signal"] = sig.name
+                    entry = {"signal": sig.name, "sent_at_ms": _elapsed_ms(started),
+                             "exited_after_ms": None}
+                    signals.append(entry)
                     os.killpg(kilo.pid, sig)
                     try:
                         kilo.wait(timeout=grace)
                     except subprocess.TimeoutExpired:
                         continue
+                    entry["exited_after_ms"] = _elapsed_ms(started)
                 result["returncode"] = kilo.poll()
                 result["terminated"] = kilo.poll() is not None
+                group_empty = _group_empty(kilo.pid)
+                after = workspace_hashes(workspace)
+                elapsed = _elapsed_ms(started)
                 # The model server notices the dropped stream on its next write.
                 if model_log:
                     self._wait_disconnect(model_log, 5)
@@ -574,11 +678,21 @@ class Runner:
                 stop_model(proc)
         streamed = sum(1 for r in requests if r.get("event") == "chunk")
         disconnected = any(r.get("event") == "client_disconnected" for r in requests)
+        last = events[-1] if events else {}
+        receipt = cancel_receipt(
+            signal_sent=result["sent_signal"], signals=signals, pgid=kilo.pid,
+            returncode=result["returncode"], terminated=result["terminated"],
+            group_empty_after_exit=group_empty, elapsed_ms=elapsed,
+            last_event={"type": last.get("type"), "sessionID": last.get("sessionID")}
+            if events else None,
+            streamed_chunks=streamed, client_disconnected=disconnected,
+            before=before, after=after)
         result.update({"events": events, "streamed_chunks": streamed,
                        "client_disconnected": disconnected, "workspace": workspace,
                        "stdout_path": stdout_path, "stderr_path": stderr_path,
                        "session_id": next((e["sessionID"] for e in events
-                                           if e.get("sessionID")), None)})
+                                           if e.get("sessionID")), None),
+                       "launcher_receipt": receipt})
         return result
 
     @staticmethod
@@ -650,7 +764,9 @@ def run_scenarios(runner):
     cancel = runner.run_cancel("cancel", message="stream a long answer")
     results["cancel"] = judge_cancel(
         cancel["events"], terminated=cancel["terminated"], returncode=cancel["returncode"],
-        sent_signal=cancel["sent_signal"] or "none", streamed_chunks=cancel["streamed_chunks"])
+        sent_signal=cancel["sent_signal"] or "none", streamed_chunks=cancel["streamed_chunks"],
+        launcher_receipt=cancel["launcher_receipt"])
+    results["cancel"]["evidence"]["launcher_receipt"] = cancel["launcher_receipt"]
     results["cancel"]["evidence"]["client_disconnected"] = cancel["client_disconnected"]
     results["cancel"]["evidence"]["workspace_files"] = sorted(
         workspace_state(cancel["workspace"]))
