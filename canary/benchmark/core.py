@@ -44,6 +44,9 @@ _ACCEPTANCE_BLOCK = re.compile(r"```acceptance[ \t]*\n(.*?)\n[ \t]*```", re.DOTA
 _SECRET_SHAPES = (
     re.compile(r"sk-[A-Za-z0-9_\-]{8,}"),
     re.compile(r"AIza[0-9A-Za-z_\-]{20,}"),
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"),
+    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"),
+    re.compile(r"\beyJ[A-Za-z0-9_\-]+\.eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+"),
 )
 
 
