@@ -2,11 +2,6 @@
 
 Every driver module in this package builds on BaseDriver. Public API:
 
-  CLI_NOT_INSTALLED                    gap id for a missing CLI ("cli-not-installed").
-  CliNotInstalled(exe)                 Raised by run() when the CLI is not on PATH.
-                                       Carries gap_id; a declared gap, never a trial.
-  CliRunFailed(exe, returncode, tail)  Raised by run() on a non-zero exit.
-  TASK_PROMPT                          The resume prompt every CLI receives.
   CANARY_API_KEY                       Non-secret placeholder for CLIs that demand a key.
   clean_env(clean_home, extra=None)    Env built from scratch: PATH, LANG, NO_COLOR, TMPDIR,
                                        HOME and XDG_* inside clean_home, then `extra`.
@@ -19,20 +14,23 @@ Every driver module in this package builds on BaseDriver. Public API:
                                        TypeError on a JSON line that is not an object;
                                        both name the line number.
   action_target(tool_input) -> str     First of file_path, filePath, path, command, else "".
-  RunSummary(actions, tokens_in, tokens_out, cost_usd)
+  RunSummary(actions, tokens_in, tokens_out, cost_usd, transcript_text)
                                        What parse_log() returns. actions is a list of
                                        (verb, target) tuples in call order.
   BaseDriver                           The protocol every driver implements:
     class attributes  name (== its DRIVERS key), provider, exe,
                       extra_gaps: ((id, reason), ...) beyond the harness adapter's gaps.
     command(checkpoint, model_base_url, clean_home) -> (argv, env)   ABSTRACT, pure.
+                                       The prompt is core.build_prompt(checkpoint).
     parse_log(stdout: bytes) -> RunSummary                           ABSTRACT.
     prepare_home(clean_home, model) -> None    Hook, default no-op; runs just before exec.
     argv_for_model(argv, alias) -> list        Hook, default returns argv unchanged.
     prepare(checkpoint, clean_home)            Creates clean_home/workspace, snapshots it.
     run(model)                                 model = {"alias", "base_url"}; execs the CLI
                                                in the workspace; times it; keeps stdout.
-    collect() -> trial dict                    Trial fields from the log and the workspace.
+                                               Raises CliNotInstalled or CliRunFailed.
+    collect() -> observation                   Trial fields plus transcript_text. The
+                                               files touched are the workspace diff.
     gaps() -> [{"id", "reason"}]               Harness adapter gaps plus extra_gaps.
 
 Drivers must not read real *_API_KEY values, and must build env with clean_env().
@@ -48,32 +46,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from agent_extensions.sync.harness import ADAPTERS
+from canary.benchmark.core import CliNotInstalled, CliRunFailed, redact
 
-CLI_NOT_INSTALLED = "cli-not-installed"
-TASK_PROMPT = "Resume the recorded next action and write allowed.txt containing hello."
 CANARY_API_KEY = "scripted-canary-no-secret"
 RUN_TIMEOUT_S = 900
-STDERR_TAIL_CHARS = 2000
-
-
-class CliNotInstalled(Exception):
-    """The CLI is not on PATH: a declared gap, never a trial."""
-
-    gap_id = CLI_NOT_INSTALLED
-
-    def __init__(self, exe):
-        super().__init__(f"{exe}: not installed (not on PATH)")
-        self.exe = exe
-
-
-class CliRunFailed(Exception):
-    """The CLI exited non-zero; nothing is collected from it."""
-
-    def __init__(self, exe, returncode, stderr_tail):
-        super().__init__(f"{exe} exited {returncode}: {stderr_tail}")
-        self.exe = exe
-        self.returncode = returncode
-        self.stderr_tail = stderr_tail
+STDERR_TAIL_CHARS = 300
 
 
 @dataclass(frozen=True)
@@ -82,6 +59,7 @@ class RunSummary:
     tokens_in: int = 0
     tokens_out: int = 0
     cost_usd: float | None = None
+    transcript_text: str = ""  # the agent's assistant text, joined in order
 
 
 def clean_env(clean_home, extra=None):
@@ -188,11 +166,11 @@ class BaseDriver:
         self.prepare_home(self._clean_home, model)
         argv = self.argv_for_model(argv, alias)
         started = time.monotonic()
-        proc = subprocess.run(argv, cwd=self._workspace, env=env, capture_output=True,
-                              timeout=RUN_TIMEOUT_S, check=False)
+        proc = subprocess.run(argv, cwd=self._workspace, env=env, stdin=subprocess.DEVNULL,
+                              capture_output=True, timeout=RUN_TIMEOUT_S, check=False)
         self._latency_ms = round((time.monotonic() - started) * 1000)
         if proc.returncode != 0:
-            tail = proc.stderr.decode("utf-8", errors="replace")[-STDERR_TAIL_CHARS:]
+            tail = redact(proc.stderr.decode("utf-8", errors="replace"))[-STDERR_TAIL_CHARS:]
             raise CliRunFailed(self.exe, proc.returncode, tail)
         self._stdout = proc.stdout
         self._alias = alias
@@ -202,7 +180,9 @@ class BaseDriver:
             raise RuntimeError(f"{self.name}: run() must succeed before collect()")
         summary = self.parse_log(self._stdout)
         after = digest_tree(self._workspace)
-        touched = sorted(p for p, h in after.items() if self._before.get(p) != h)
+        # Added, changed and removed paths alike: the diff covers both trees' keys.
+        touched = sorted(p for p in set(after) | set(self._before)
+                         if self._before.get(p) != after.get(p))
         actions = summary.actions
         first = {"verb": actions[0][0], "target": actions[0][1]} if actions else {
             "verb": "", "target": ""}
@@ -220,6 +200,7 @@ class BaseDriver:
             "cost_usd": summary.cost_usd,
             "interventions": 0,
             "raw_log_digest": digest(self._stdout),
+            "transcript_text": summary.transcript_text,
         }
 
     def gaps(self):

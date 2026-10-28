@@ -1,0 +1,11 @@
+{
+  "infisical_identity_id": "",
+  "project_slug": "",
+  "secret_path": "",
+  "providers": {
+    "claude-code": {"provisioned": false},
+    "codex": {"provisioned": false},
+    "gemini-cli": {"provisioned": false},
+    "kilo": {"provisioned": false}
+  }
+}

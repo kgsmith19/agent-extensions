@@ -11,13 +11,13 @@ import json
 from pathlib import Path
 
 from canary.benchmark.adapters._base import (
-    TASK_PROMPT,
     BaseDriver,
     RunSummary,
     action_target,
     clean_env,
     parse_json_lines,
 )
+from canary.benchmark.core import RunIncomplete, build_prompt
 from canary.kilo.run_canary import PROVIDER_BLOCK, TEMPLATE, render_config
 
 
@@ -27,7 +27,7 @@ class KiloDriver(BaseDriver):
     exe = "kilo"
 
     def command(self, checkpoint, model_base_url, clean_home):
-        argv = [self.exe, "run", "--format", "json", "--auto", TASK_PROMPT]
+        argv = [self.exe, "run", "--format", "json", "--auto", build_prompt(checkpoint)]
         # kilo.json (written by prepare_home) carries the base URL literally, as the canary
         # does. This variable repeats it for the OpenAI-wire contract; kilo does not read it.
         env = clean_env(clean_home, {"OPENAI_BASE_URL": f"{model_base_url}/v1"})
@@ -44,12 +44,15 @@ class KiloDriver(BaseDriver):
 
     def parse_log(self, stdout):
         actions = []
+        texts = []
         tokens_in = tokens_out = 0
         costs = []
         steps = 0
         for event in parse_json_lines(stdout):
             part = event.get("part") or {}
-            if event.get("type") == "tool_use":
+            if event.get("type") == "text":
+                texts.append(part["text"])
+            elif event.get("type") == "tool_use":
                 state = part.get("state") or {}
                 actions.append((part["tool"], action_target(state.get("input") or {})))
             elif event.get("type") == "step_finish":
@@ -59,6 +62,6 @@ class KiloDriver(BaseDriver):
                 tokens_out += tokens["output"]
                 costs.append(part["cost"])
         if steps == 0:
-            raise ValueError("kilo json log has no step_finish event")
+            raise RunIncomplete("kilo json log has no step_finish event")
         return RunSummary(actions=actions, tokens_in=tokens_in, tokens_out=tokens_out,
-                          cost_usd=float(sum(costs)))
+                          cost_usd=float(sum(costs)), transcript_text="\n".join(texts))

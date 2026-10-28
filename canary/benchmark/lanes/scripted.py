@@ -32,7 +32,7 @@ def _data(payload):
 
 def _named(name, payload):
     """An `event:` + `data:` SSE frame (Responses and Messages)."""
-    return f"event: {name}\n".encode("utf-8") + _data(payload)
+    return f"event: {name}\n".encode() + _data(payload)
 
 
 def _tokens_in(request):

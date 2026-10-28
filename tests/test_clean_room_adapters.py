@@ -1,22 +1,20 @@
-"""RED: clean-room harness drivers for the benchmark (#91).
+"""Clean-room harness drivers for the benchmark (#91).
 
-Contract under test (canary/benchmark/adapters/, not written yet):
+Contract under test (canary/benchmark/adapters/):
 
   adapters.DRIVERS                 dict[str, type]; exactly the keys below.
   Driver.name                      equals its DRIVERS key and the trial `harness`.
   Driver.command(checkpoint, model_base_url, clean_home) -> (argv, env)
-                                   pure; no CLI is run.
-  Driver.prepare(checkpoint, clean_home), Driver.run(model), Driver.collect() -> trial dict,
+                                   pure; no CLI is run. The prompt is core.build_prompt.
+  Driver.prepare(checkpoint, clean_home), Driver.run(model), Driver.collect() -> observation
+                                   (a trial dict plus transcript_text).
   Driver.gaps() -> [{"id", "reason"}].
 
 Model object passed to run(model): {"alias": <str>, "base_url": <str>}. The
 base URL is the double's root (no path); each driver appends its own path.
 
-Fake CLIs: each collect() test puts an executable named like the real CLI on
-PATH. It prints a canned stdout (a fixture string in this module) and touches
-allowed.txt in its working directory, which the driver sets to the workspace.
-
-Hermetic: no npm, no real CLI, no network, no Infisical.
+Fake CLIs (tests/fixtures/clean_room/fake_clis.py) print canned output, so every
+run here is hermetic: no npm, no real CLI, no network, no Infisical.
 """
 
 import hashlib
@@ -26,9 +24,14 @@ from pathlib import Path
 import pytest
 
 from agent_extensions.sync.harness import ADAPTERS
-from canary.benchmark import adapters
+from canary.benchmark import adapters, core
+from tests.fixtures.clean_room.fake_clis import (
+    CHECKPOINT,
+    CODEX_COMMAND_JSONL,
+    FAKE_CLIS,
+    write_fake_cli,
+)
 
-CHECKPOINT = {"id": "cr.R1.implement", "fixture": {"head_sha": "a" * 40}}
 BASE = "http://127.0.0.1:43210"
 ALIAS = "scripted/m1"
 
@@ -41,62 +44,18 @@ SENTINEL_OPENAI = "sk-openai-sentinel-must-not-leak"
 SENTINEL_GOOGLE = "google-sentinel-must-not-leak"
 LEAK_MARKER_VAR = "AE_CLEAN_ROOM_LEAK_MARKER"
 HOME_VARS = ("HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME")
-
-# --- canned CLI stdout (the raw log; its sha256 is the expected raw_log_digest) ----------
-
-CLAUDE_STREAM_JSON = (
-    '{"type":"system","subtype":"init","session_id":"s1","model":"m1"}\n'
-    '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use",'
-    '"id":"t1","name":"Write","input":{"file_path":"allowed.txt","content":"hello\\n"}}]}}\n'
-    '{"type":"user","message":{"role":"user","content":[{"type":"tool_result",'
-    '"tool_use_id":"t1","content":"ok"}]}}\n'
-    '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}\n'
-    '{"type":"result","subtype":"success","is_error":false,"result":"done",'
-    '"total_cost_usd":0.0,"usage":{"input_tokens":31,"output_tokens":5}}\n'
-).encode("utf-8")
-
-CODEX_EXEC_JSONL = (
-    '{"type":"thread.started","thread_id":"th1"}\n'
-    '{"type":"turn.started"}\n'
-    '{"type":"item.completed","item":{"id":"i1","type":"file_change","status":"completed",'
-    '"changes":[{"path":"allowed.txt","kind":"add"}]}}\n'
-    '{"type":"item.completed","item":{"id":"i2","type":"agent_message","text":"done"}}\n'
-    '{"type":"turn.completed","usage":{"input_tokens":40,"cached_input_tokens":0,'
-    '"output_tokens":7}}\n'
-).encode("utf-8")
-
-GEMINI_STREAM_JSON = (
-    '{"type":"init","session_id":"g1","model":"m1"}\n'
-    '{"type":"tool_use","tool_name":"write_file","tool_id":"w1",'
-    '"parameters":{"file_path":"allowed.txt","content":"hello\\n"}}\n'
-    '{"type":"tool_result","tool_id":"w1","status":"success"}\n'
-    '{"type":"message","role":"assistant","content":"done"}\n'
-    '{"type":"result","status":"success","stats":{"input_tokens":25,"output_tokens":4}}\n'
-).encode("utf-8")
-
-KILO_RUN_JSON = (
-    '{"type":"step_start","part":{"type":"step-start"}}\n'
-    '{"type":"tool_use","part":{"type":"tool","tool":"write","state":{"status":"completed",'
-    '"input":{"filePath":"allowed.txt","content":"hello\\n"}}}}\n'
-    '{"type":"step_finish","part":{"type":"step-finish","reason":"tool-calls",'
-    '"cost":0,"tokens":{"input":12,"output":3}}}\n'
-    '{"type":"text","part":{"type":"text","text":"done"}}\n'
-    '{"type":"step_finish","part":{"type":"step-finish","reason":"stop",'
-    '"cost":0,"tokens":{"input":18,"output":2}}}\n'
-).encode("utf-8")
-
-# driver name -> (executable, canned stdout, provider, (tokens_in, tokens_out))
-FAKE_CLIS = {
-    "claude-code": ("claude", CLAUDE_STREAM_JSON, "claude", (31, 5)),
-    "codex": ("codex", CODEX_EXEC_JSONL, "codex", (40, 7)),
-    "gemini-cli": ("gemini", GEMINI_STREAM_JSON, "gemini", (25, 4)),
-    "kilo": ("kilo", KILO_RUN_JSON, "kilo", (30, 5)),
-}
-
 TRIAL_FIELDS = (
     "harness", "provider", "model_alias", "first_action", "files_touched",
     "tokens_in", "tokens_out", "latency_ms", "cost_usd", "interventions", "raw_log_digest",
 )
+# D5: the claude canned write is a Bash touch; the others are native writes.
+FIRST_ACTIONS = {
+    "claude-code": {"verb": "bash", "target": "touch allowed.txt"},
+    "codex": {"verb": "write", "target": "allowed.txt"},
+    "gemini-cli": {"verb": "write", "target": "allowed.txt"},
+    "kilo": {"verb": "write", "target": "allowed.txt"},
+}
+SECRET = "sk-proj-SECRETVALUE1234567890"
 
 
 # --- helpers ---------------------------------------------------------------------------
@@ -114,19 +73,21 @@ def _inside(path, root):
     return Path(path).resolve().is_relative_to(Path(root).resolve())
 
 
-def _write_fake_cli(bin_dir, exe, stdout):
-    """Executable `exe` that prints `stdout` and touches allowed.txt in its cwd."""
-    bin_dir.mkdir(parents=True, exist_ok=True)
-    canned = bin_dir / f"{exe}.canned-stdout"
-    canned.write_bytes(stdout)
-    fake = bin_dir / exe
-    fake.write_text(f'#!/bin/sh\ncat "{canned}"\ntouch "$PWD/allowed.txt"\n', encoding="utf-8")
-    fake.chmod(0o755)
-    return fake
-
-
 def _put_on_path(monkeypatch, bin_dir):
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+
+
+def _fake_on_path(monkeypatch, tmp_path, name, stdout=None, **kwargs):
+    exe, canned, _, _ = FAKE_CLIS[name]
+    bin_dir = tmp_path / "bin"
+    write_fake_cli(bin_dir, exe, canned if stdout is None else stdout, **kwargs)
+    _put_on_path(monkeypatch, bin_dir)
+
+
+def _clean_home(tmp_path):
+    clean_home = tmp_path / "clean-home"
+    clean_home.mkdir()
+    return clean_home
 
 
 def _outcome_of_run_and_collect(driver, model):
@@ -164,29 +125,48 @@ def test_each_driver_exposes_the_protocol_methods(name):
         assert callable(getattr(driver, method, None)), (name, method)
 
 
+# --- D1: the prompt is core.build_prompt, in argv ------------------------------------------
+
+
+@pytest.mark.parametrize("name", DRIVER_NAMES)
+def test_every_driver_sends_build_prompt_in_argv(name, tmp_path):
+    argv, _ = _driver(name).command(CHECKPOINT, BASE, _clean_home(tmp_path))
+    prompt = core.build_prompt(CHECKPOINT)
+    assert prompt in argv, name
+    assert CHECKPOINT["fixture"]["prompt_text"] in argv[argv.index(prompt)], name
+
+
+@pytest.mark.parametrize("name", DRIVER_NAMES)
+def test_every_driver_refuses_a_checkpoint_without_prompt_text(name, tmp_path):
+    checkpoint = {"id": "cr.R0.spec", "fixture": {"head_sha": "a" * 40}}
+    with pytest.raises(ValueError, match="prompt_text"):
+        _driver(name).command(checkpoint, BASE, _clean_home(tmp_path))
+
+
 # --- command(): argv pins --------------------------------------------------------------
 
 
-def test_claude_command_is_headless_stream_json_with_bare():
-    argv, _ = _driver("claude-code").command(CHECKPOINT, BASE, Path("/unused"))
+def test_claude_command_is_headless_stream_json_with_bare_and_verbose(tmp_path):
+    argv, _ = _driver("claude-code").command(CHECKPOINT, BASE, _clean_home(tmp_path))
     assert argv[:5] == ["claude", "-p", "--output-format", "stream-json", "--bare"]
+    assert "--verbose" in argv  # D5: stream-json with -p requires --verbose
 
 
-def test_codex_command_is_exec_json():
-    argv, _ = _driver("codex").command(CHECKPOINT, BASE, Path("/unused"))
+def test_codex_command_is_exec_json(tmp_path):
+    argv, _ = _driver("codex").command(CHECKPOINT, BASE, _clean_home(tmp_path))
     assert argv[:3] == ["codex", "exec", "--json"]
 
 
-def test_gemini_command_is_headless_prompt_with_stream_json_output():
-    argv, _ = _driver("gemini-cli").command(CHECKPOINT, BASE, Path("/unused"))
+def test_gemini_command_is_headless_prompt_with_stream_json_output(tmp_path):
+    argv, _ = _driver("gemini-cli").command(CHECKPOINT, BASE, _clean_home(tmp_path))
     assert argv[0] == "gemini"
     assert "-p" in argv
     flag = argv.index("--output-format")
     assert argv[flag + 1] == "stream-json"
 
 
-def test_kilo_command_is_run_with_json_format():
-    argv, _ = _driver("kilo").command(CHECKPOINT, BASE, Path("/unused"))
+def test_kilo_command_is_run_with_json_format(tmp_path):
+    argv, _ = _driver("kilo").command(CHECKPOINT, BASE, _clean_home(tmp_path))
     assert argv[:4] == ["kilo", "run", "--format", "json"]
 
 
@@ -195,8 +175,7 @@ def test_kilo_command_is_run_with_json_format():
 
 @pytest.mark.parametrize("name", DRIVER_NAMES)
 def test_home_and_xdg_dirs_point_inside_clean_home(name, tmp_path):
-    clean_home = tmp_path / "clean-home"
-    clean_home.mkdir()
+    clean_home = _clean_home(tmp_path)
     _, env = _driver(name).command(CHECKPOINT, BASE, clean_home)
     for var in HOME_VARS:
         assert var in env, (name, var)
@@ -204,8 +183,7 @@ def test_home_and_xdg_dirs_point_inside_clean_home(name, tmp_path):
 
 
 def test_codex_home_points_inside_clean_home(tmp_path):
-    clean_home = tmp_path / "clean-home"
-    clean_home.mkdir()
+    clean_home = _clean_home(tmp_path)
     _, env = _driver("codex").command(CHECKPOINT, BASE, clean_home)
     assert _inside(env["CODEX_HOME"], clean_home)
 
@@ -216,9 +194,7 @@ def test_real_api_key_sentinels_in_os_environ_never_reach_the_cli_env(name, tmp_
     monkeypatch.setenv("OPENAI_API_KEY", SENTINEL_OPENAI)
     monkeypatch.setenv("GEMINI_API_KEY", SENTINEL_GOOGLE)
     monkeypatch.setenv("GOOGLE_API_KEY", SENTINEL_GOOGLE)
-    clean_home = tmp_path / "clean-home"
-    clean_home.mkdir()
-    _, env = _driver(name).command(CHECKPOINT, BASE, clean_home)
+    _, env = _driver(name).command(CHECKPOINT, BASE, _clean_home(tmp_path))
     assert env.get("ANTHROPIC_API_KEY") != SENTINEL_ANTHROPIC
     assert env.get("OPENAI_API_KEY") != SENTINEL_OPENAI
     leaked = [k for k, v in env.items()
@@ -229,32 +205,24 @@ def test_real_api_key_sentinels_in_os_environ_never_reach_the_cli_env(name, tmp_
 @pytest.mark.parametrize("name", DRIVER_NAMES)
 def test_env_is_built_from_scratch_not_inherited_wholesale(name, tmp_path, monkeypatch):
     monkeypatch.setenv(LEAK_MARKER_VAR, "inherited")
-    clean_home = tmp_path / "clean-home"
-    clean_home.mkdir()
-    _, env = _driver(name).command(CHECKPOINT, BASE, clean_home)
+    _, env = _driver(name).command(CHECKPOINT, BASE, _clean_home(tmp_path))
     assert LEAK_MARKER_VAR not in env
     assert "PATH" in env  # the CLI needs PATH to find its own runtime
 
 
 def test_claude_env_points_its_api_base_at_the_double(tmp_path):
-    clean_home = tmp_path / "clean-home"
-    clean_home.mkdir()
-    _, env = _driver("claude-code").command(CHECKPOINT, BASE, clean_home)
+    _, env = _driver("claude-code").command(CHECKPOINT, BASE, _clean_home(tmp_path))
     assert env["ANTHROPIC_BASE_URL"] == BASE
 
 
 def test_gemini_env_points_its_api_base_at_the_double(tmp_path):
-    clean_home = tmp_path / "clean-home"
-    clean_home.mkdir()
-    _, env = _driver("gemini-cli").command(CHECKPOINT, BASE, clean_home)
+    _, env = _driver("gemini-cli").command(CHECKPOINT, BASE, _clean_home(tmp_path))
     assert env["GOOGLE_GEMINI_BASE_URL"] == BASE
 
 
 @pytest.mark.parametrize("name", ("codex", "kilo"))
 def test_openai_wire_drivers_carry_the_double_url_in_argv_or_env(name, tmp_path):
-    clean_home = tmp_path / "clean-home"
-    clean_home.mkdir()
-    argv, env = _driver(name).command(CHECKPOINT, BASE, clean_home)
+    argv, env = _driver(name).command(CHECKPOINT, BASE, _clean_home(tmp_path))
     carried = [*argv, *env.values()]
     assert any(BASE in str(value) for value in carried), name
 
@@ -300,60 +268,50 @@ def test_no_driver_edits_the_harness_adapter_registry():
 
 @pytest.mark.parametrize("name", DRIVER_NAMES)
 def test_collect_maps_a_fake_cli_run_into_trial_fields(name, tmp_path, monkeypatch):
-    exe, stdout, provider, (tokens_in, tokens_out) = FAKE_CLIS[name]
-    bin_dir = tmp_path / "bin"
-    _write_fake_cli(bin_dir, exe, stdout)
-    _put_on_path(monkeypatch, bin_dir)
-    clean_home = tmp_path / "clean-home"
-    clean_home.mkdir()
+    _, _, provider, (tokens_in, tokens_out) = FAKE_CLIS[name]
+    _fake_on_path(monkeypatch, tmp_path, name)
+    clean_home = _clean_home(tmp_path)
 
     driver = _driver(name)
     driver.prepare(CHECKPOINT, clean_home)
     driver.run(_model())
-    trial = driver.collect()
+    observation = driver.collect()
 
     for field in TRIAL_FIELDS:
-        assert field in trial, (name, field)
-    assert trial["harness"] == name
-    assert trial["provider"] == provider
-    assert trial["model_alias"] == ALIAS
-    assert trial["first_action"] == {"verb": "write", "target": "allowed.txt"}
-    assert trial["files_touched"] == ["allowed.txt"]
-    assert trial["tokens_in"] == tokens_in
-    assert trial["tokens_out"] == tokens_out
-    assert isinstance(trial["latency_ms"], int) and trial["latency_ms"] >= 0
-    assert trial["interventions"] == 0
+        assert field in observation, (name, field)
+    assert observation["harness"] == name
+    assert observation["provider"] == provider
+    assert observation["model_alias"] == ALIAS
+    assert observation["first_action"] == FIRST_ACTIONS[name]
+    assert observation["files_touched"] == ["allowed.txt"]
+    assert observation["tokens_in"] == tokens_in
+    assert observation["tokens_out"] == tokens_out
+    assert isinstance(observation["latency_ms"], int) and observation["latency_ms"] >= 0
+    assert observation["interventions"] == 0
 
 
 @pytest.mark.parametrize("name", DRIVER_NAMES)
 def test_collect_digests_the_real_captured_log_bytes(name, tmp_path, monkeypatch):
-    exe, stdout, _, _ = FAKE_CLIS[name]
-    bin_dir = tmp_path / "bin"
-    _write_fake_cli(bin_dir, exe, stdout)
-    _put_on_path(monkeypatch, bin_dir)
-    clean_home = tmp_path / "clean-home"
-    clean_home.mkdir()
+    _, stdout, _, _ = FAKE_CLIS[name]
+    _fake_on_path(monkeypatch, tmp_path, name)
+    clean_home = _clean_home(tmp_path)
 
     driver = _driver(name)
     driver.prepare(CHECKPOINT, clean_home)
     driver.run(_model())
-    trial = driver.collect()
+    observation = driver.collect()
 
     expected = "sha256:" + hashlib.sha256(stdout).hexdigest()
-    assert trial["raw_log_digest"] == expected
+    assert observation["raw_log_digest"] == expected
     # Never the checkpoint id (the std oracle's stand-in digest).
-    assert trial["raw_log_digest"] != "sha256:" + hashlib.sha256(
+    assert observation["raw_log_digest"] != "sha256:" + hashlib.sha256(
         CHECKPOINT["id"].encode("utf-8")).hexdigest()
 
 
 @pytest.mark.parametrize("name", DRIVER_NAMES)
 def test_fake_cli_writes_only_inside_clean_home(name, tmp_path, monkeypatch):
-    exe, stdout, _, _ = FAKE_CLIS[name]
-    bin_dir = tmp_path / "bin"
-    _write_fake_cli(bin_dir, exe, stdout)
-    _put_on_path(monkeypatch, bin_dir)
-    clean_home = tmp_path / "clean-home"
-    clean_home.mkdir()
+    _fake_on_path(monkeypatch, tmp_path, name)
+    clean_home = _clean_home(tmp_path)
 
     driver = _driver(name)
     driver.prepare(CHECKPOINT, clean_home)
@@ -367,12 +325,8 @@ def test_fake_cli_writes_only_inside_clean_home(name, tmp_path, monkeypatch):
 def test_kilo_renders_the_scripted_provider_block_into_clean_home(tmp_path, monkeypatch):
     from canary.kilo.run_canary import PROVIDER_BLOCK
 
-    exe, stdout, _, _ = FAKE_CLIS["kilo"]
-    bin_dir = tmp_path / "bin"
-    _write_fake_cli(bin_dir, exe, stdout)
-    _put_on_path(monkeypatch, bin_dir)
-    clean_home = tmp_path / "clean-home"
-    clean_home.mkdir()
+    _fake_on_path(monkeypatch, tmp_path, "kilo")
+    clean_home = _clean_home(tmp_path)
 
     driver = _driver("kilo")
     driver.prepare(CHECKPOINT, clean_home)
@@ -384,6 +338,100 @@ def test_kilo_renders_the_scripted_provider_block_into_clean_home(tmp_path, monk
     assert any(npm in text and f"{BASE}/v1" in text for text in rendered)
 
 
+# --- D2: the acceptance attempt comes from the transcript; each fake CLI validates ----------
+
+
+@pytest.mark.parametrize("name", DRIVER_NAMES)
+def test_collect_exposes_the_agent_transcript_with_its_acceptance_block(name, tmp_path, monkeypatch):
+    _fake_on_path(monkeypatch, tmp_path, name)
+    clean_home = _clean_home(tmp_path)
+    driver = _driver(name)
+    driver.prepare(CHECKPOINT, clean_home)
+    driver.run(_model())
+    transcript = driver.collect()["transcript_text"]
+    assert isinstance(transcript, str)
+    assert transcript.count("```acceptance") == 1, name
+
+
+@pytest.mark.parametrize("name", DRIVER_NAMES)
+def test_a_full_fake_cli_trial_validates_against_the_trial_model(name, tmp_path, monkeypatch):
+    _fake_on_path(monkeypatch, tmp_path, name)
+    trial = core.run_trial(_driver(name), CHECKPOINT, _model(), _clean_home(tmp_path))
+    assert "status" not in trial and "transcript_text" not in trial
+    core.validate_trial(trial)
+    assert trial["acceptance_attempt"]["role"] == "builder", name
+    assert trial["acceptance_attempt"]["prompt_text"] == core.build_prompt(CHECKPOINT), name
+
+
+# --- D5: codex command_execution and file_change both give files_touched ------------------
+
+
+@pytest.mark.parametrize("canned, first", [
+    (None, {"verb": "write", "target": "allowed.txt"}),  # file_change canned stream
+    (CODEX_COMMAND_JSONL, {"verb": "exec", "target": "/bin/bash -lc 'touch allowed.txt'"}),
+])
+def test_codex_write_is_files_touched_whichever_item_shape_carries_it(canned, first,
+                                                                    tmp_path, monkeypatch):
+    stdout = canned if canned is not None else FAKE_CLIS["codex"][1]
+    write_fake_cli(tmp_path / "bin", "codex", stdout)
+    _put_on_path(monkeypatch, tmp_path / "bin")
+    driver = _driver("codex")
+    driver.prepare(CHECKPOINT, _clean_home(tmp_path))
+    driver.run(_model())
+    observation = driver.collect()
+    assert observation["files_touched"] == ["allowed.txt"]
+    assert observation["first_action"] == first
+
+
+# --- D4: files_touched is the workspace diff, add/change/remove ---------------------------
+
+
+@pytest.mark.parametrize("name", DRIVER_NAMES)
+def test_files_touched_is_the_workspace_diff_for_add_change_and_remove(name, tmp_path, monkeypatch):
+    # The canned events name only allowed.txt. The shell changes three more files; the diff
+    # must report all of them, so an event-based answer fails here.
+    shell = "printf 'new\\n' > added.txt; printf 'changed\\n' > changed.txt; rm -f gone.txt"
+    _fake_on_path(monkeypatch, tmp_path, name, extra_sh=shell)
+    clean_home = _clean_home(tmp_path)
+    workspace = clean_home / "workspace"
+    workspace.mkdir()
+    (workspace / "changed.txt").write_text("old\n", encoding="utf-8")  # present before prepare
+    (workspace / "gone.txt").write_text("bye\n", encoding="utf-8")
+    driver = _driver(name)
+    driver.prepare(CHECKPOINT, clean_home)  # snapshots the seeded tree
+    driver.run(_model())
+    observation = driver.collect()
+    assert observation["files_touched"] == sorted(
+        ["added.txt", "allowed.txt", "changed.txt", "gone.txt"]), name
+
+
+# --- D6: a failed or incomplete CLI run is a gap, never a trial ---------------------------
+
+
+@pytest.mark.parametrize("name", DRIVER_NAMES)
+def test_non_zero_exit_is_a_cli_run_failed_gap_and_redacts_secrets(name, tmp_path, monkeypatch):
+    exe = FAKE_CLIS[name][0]
+    stderr = f"auth failed for key {SECRET}\n".encode("utf-8")
+    _fake_on_path(monkeypatch, tmp_path, name, stdout=b"", exit_code=3, stderr=stderr)
+    result = core.run_trial(_driver(name), CHECKPOINT, _model(), _clean_home(tmp_path))
+    assert result["status"] == "gap", name
+    gap = result["gap"]
+    assert gap["id"] == "cli-run-failed", name
+    assert gap["reason"].startswith(f"{exe} exited 3: "), gap["reason"]
+    assert "tokens_in" not in result and "harness" not in result, name
+    assert SECRET not in gap["reason"], name
+    assert "[REDACTED]" in gap["reason"], name
+
+
+@pytest.mark.parametrize("name", DRIVER_NAMES)
+def test_a_run_without_its_terminal_event_is_a_gap_never_a_trial(name, tmp_path, monkeypatch):
+    _fake_on_path(monkeypatch, tmp_path, name, stdout=b"")
+    result = core.run_trial(_driver(name), CHECKPOINT, _model(), _clean_home(tmp_path))
+    assert result["status"] == "gap", name
+    assert result["gap"]["id"] == "cli-run-failed", name
+    assert "tokens_in" not in result, name
+
+
 # --- missing CLI: a declared gap, never a fake trial -----------------------------------
 
 
@@ -392,8 +440,7 @@ def test_missing_cli_yields_declared_gap_not_a_trial(name, tmp_path, monkeypatch
     empty_bin = tmp_path / "empty-bin"
     empty_bin.mkdir()
     monkeypatch.setenv("PATH", str(empty_bin))
-    clean_home = tmp_path / "clean-home"
-    clean_home.mkdir()
+    clean_home = _clean_home(tmp_path)
 
     driver = _driver(name)
     driver.prepare(CHECKPOINT, clean_home)
@@ -411,8 +458,7 @@ def test_missing_cli_gap_is_not_reported_as_a_pass_or_a_trial_for_any_driver(tmp
     empty_bin = tmp_path / "empty-bin"
     empty_bin.mkdir()
     monkeypatch.setenv("PATH", str(empty_bin))
-    clean_home = tmp_path / "clean-home"
-    clean_home.mkdir()
+    clean_home = _clean_home(tmp_path)
     for name in DRIVER_NAMES:
         driver = _driver(name)
         driver.prepare(CHECKPOINT, clean_home)
