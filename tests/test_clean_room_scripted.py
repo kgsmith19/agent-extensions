@@ -235,17 +235,41 @@ def test_double_refuses_connections_after_the_context_exits(protocol):
 # --- protocol-specific wire shape -----------------------------------------------------
 
 
-def test_responses_stream_is_created_then_text_deltas_then_completed():
-    with ResponsesDouble(SCRIPT) as double:
+def test_responses_stream_matches_the_real_codex_event_sequence():
+    # Pinned from a codex 0.165.0 run against this double. The shorter shape (created,
+    # bare output_text.delta, completed) is rejected: codex logs "OutputTextDelta without
+    # active item" and emits no agent_message for the turn.
+    reply = "first reply"
+    with ResponsesDouble([reply]) as double:
         _, _, data = _request(double.base_url, "POST", "/v1/responses", _responses_body())
-    names = [name for name, _ in _sse_events(data)]
-    assert names[0] == "response.created"
-    assert names[-1] == "response.completed"
-    middle = names[1:-1]
-    assert middle and all(n == "response.output_text.delta" for n in middle)
+    events = _sse_events(data)
+    assert [name for name, _ in events] == [
+        "response.created",
+        "response.output_item.added",
+        "response.content_part.added",
+        "response.output_text.delta",
+        "response.output_text.done",
+        "response.content_part.done",
+        "response.output_item.done",
+        "response.completed",
+    ]
+    payloads = [json.loads(p) for _, p in events]
     # The SSE event name and the JSON "type" field agree, as the Responses API does.
-    for name, payload in _sse_events(data):
-        assert json.loads(payload)["type"] == name
+    for (name, _), payload in zip(events, payloads):
+        assert payload["type"] == name
+    added_item = payloads[1]["item"]
+    assert added_item["type"] == "message"
+    assert added_item["role"] == "assistant"
+    assert added_item["status"] == "in_progress"
+    assert payloads[2]["part"] == {"type": "output_text", "text": "", "annotations": []}
+    deltas = "".join(p["delta"] for p in payloads if p["type"] == "response.output_text.delta")
+    assert deltas == payloads[4]["text"] == reply
+    done_item = payloads[6]["item"]
+    assert done_item["status"] == "completed"
+    assert done_item["content"] == [{"type": "output_text", "text": reply, "annotations": []}]
+    completed = payloads[7]["response"]
+    assert completed["output"] == [done_item]
+    assert set(completed["usage"]) == {"input_tokens", "output_tokens", "total_tokens"}
 
 
 def test_messages_stream_has_the_anthropic_event_order():
