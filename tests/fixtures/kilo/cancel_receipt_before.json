@@ -1,0 +1,10 @@
+[
+  {
+    "path": "allowed.txt",
+    "sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
+  },
+  {
+    "path": "notes.txt",
+    "sha256": "0b113fa13e110fe7b7c8bf9dbbac2db34cdb75731c7aeed0c3a0bccf952ebfb1"
+  }
+]
