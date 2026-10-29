@@ -1,0 +1,168 @@
+name: Clean-room benchmark
+
+# Stage 64b (#91): runs the clean-room harness runner against std's pinned
+# clean-room corpus and scorer (canary/benchmark/std-pin.json). The
+# deterministic lane drives every installable harness CLI against scripted
+# protocol doubles; the live lane is dispatch-only and records providers that
+# are not provisioned instead of calling them. Not part of the PR Gate.
+
+on:
+  pull_request:
+    paths:
+      - "canary/benchmark/**"
+      - ".github/workflows/clean-room-benchmark.yml"
+  workflow_dispatch:
+    inputs:
+      lane:
+        description: "live reads canary/benchmark/live-lane.json and records unprovisioned providers"
+        type: choice
+        options:
+          - deterministic
+          - live
+        default: deterministic
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clean-room-benchmark-${{ github.event.pull_request.number || github.sha }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  deterministic:
+    name: Clean-room benchmark · deterministic lane
+    if: github.event_name == 'pull_request' || inputs.lane == 'deterministic'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out exact ref
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Read the pinned std commit
+        id: pin
+        run: |
+          echo "commit=$(python3 -c 'import json; print(json.load(open("canary/benchmark/std-pin.json"))["commit"])')" >> "$GITHUB_OUTPUT"
+      - name: Check out std at the pinned commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: kgsmith19/agent-engineering-standard
+          ref: ${{ steps.pin.outputs.commit }}
+          path: .std
+          persist-credentials: false
+      - name: Set up Python (pinned)
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install dev dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Set up Node (pinned)
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.19.0"
+      - name: Install the pinned harness CLIs into a temp prefix
+        env:
+          PREFIX: ${{ runner.temp }}/clis
+        run: |
+          npm install --no-audit --no-fund --prefix "$PREFIX" \
+            @anthropic-ai/claude-code@2.1.296 \
+            @openai/codex@0.162.1 \
+            @google/gemini-cli@0.64.0 \
+            @kilocode/cli@7.8.10
+          echo "$PREFIX/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: Run the deterministic lane
+        env:
+          AES_STANDARD_DIR: ${{ github.workspace }}/.std
+          OUT: ${{ runner.temp }}/clean-room
+          SUBSET: ${{ github.event_name == 'pull_request' && 'pr' || 'all' }}
+        run: |
+          mkdir -p "$OUT"
+          python -m canary.benchmark --lane deterministic --subset "$SUBSET" \
+            --std-dir "$AES_STANDARD_DIR" --out "$OUT"
+          cat "$OUT/report.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload trials and report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: clean-room-benchmark-deterministic
+          path: |
+            ${{ runner.temp }}/clean-room/trials.json
+            ${{ runner.temp }}/clean-room/report.json
+            ${{ runner.temp }}/clean-room/report.md
+          if-no-files-found: error
+          retention-days: 30
+
+  live:
+    # Dispatch-only. Unprovisioned providers become "skipped: not provisioned"
+    # records in report.json; provisioning is per-provider (Infisical OIDC,
+    # owner-approved identities, std#153 / std#311).
+    name: Clean-room benchmark · live lane
+    if: github.event_name == 'workflow_dispatch' && inputs.lane == 'live'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out exact ref
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Read the pinned std commit and the live-lane config
+        id: cfg
+        run: |
+          python3 - >> "$GITHUB_OUTPUT" <<'PY'
+          import json
+          pin = json.load(open("canary/benchmark/std-pin.json", encoding="utf-8"))
+          lane = json.load(open("canary/benchmark/live-lane.json", encoding="utf-8"))
+          print(f"commit={pin['commit']}")
+          identity = lane.get("infisical_identity_id", "")
+          print(f"provisioned={'true' if identity else 'false'}")
+          print(f"infisical_identity_id={identity}")
+          print(f"project_slug={lane.get('project_slug', '')}")
+          print(f"secret_path={lane.get('secret_path', '')}")
+          PY
+      - name: Check out std at the pinned commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: kgsmith19/agent-engineering-standard
+          ref: ${{ steps.cfg.outputs.commit }}
+          path: .std
+          persist-credentials: false
+      - name: Fetch provider keys from Infisical (OIDC)
+        if: steps.cfg.outputs.provisioned == 'true'
+        uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16
+        with:
+          method: oidc
+          identity-id: ${{ steps.cfg.outputs.infisical_identity_id }}
+          project-slug: ${{ steps.cfg.outputs.project_slug }}
+          env-slug: prod
+          secret-path: ${{ steps.cfg.outputs.secret_path }}
+          domain: https://app.infisical.com
+          export-type: env
+      - name: Set up Python (pinned)
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install dev dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Run the live lane (records unprovisioned providers)
+        env:
+          AES_STANDARD_DIR: ${{ github.workspace }}/.std
+          OUT: ${{ runner.temp }}/clean-room
+        run: |
+          mkdir -p "$OUT"
+          python -m canary.benchmark --lane live --subset all \
+            --std-dir "$AES_STANDARD_DIR" --out "$OUT"
+          cat "$OUT/report.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload trials and report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: clean-room-benchmark-live
+          path: |
+            ${{ runner.temp }}/clean-room/trials.json
+            ${{ runner.temp }}/clean-room/report.json
+            ${{ runner.temp }}/clean-room/report.md
+          if-no-files-found: error
+          retention-days: 30
