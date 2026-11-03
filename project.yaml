@@ -1,0 +1,20 @@
+# Repository facts and executable commands (AES project.yaml, restricted YAML).
+project:
+  name: agent-extensions
+  type: cross-harness-bootstrap-and-capability-layer
+  languages:
+    - python
+    - shell
+    - powershell
+
+commands:
+  install: python -m pip install -r requirements-dev.txt
+  test: AES_STANDARD_DIR=.std python -m pytest -q --ignore=.std
+  shell_tests: python3 .github/ci/script_tests.py sh
+  pwsh_tests: python3 .github/ci/script_tests.py ps1
+  compile: python3 -m compileall -q agent_extensions tests .github/ci
+
+ci:
+  # One final fail-closed gate job aggregates policy, hygiene and every test lane.
+  workflow: .github/workflows/pr-gate.yml
+  required_check: agent-extensions PR Gate
