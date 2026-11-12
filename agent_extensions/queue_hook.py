@@ -7,9 +7,11 @@ PreToolUse payload on stdin and runs std's
 `work_queue.py guard --claim OWNER/REPO#N` (located and fetched by
 queue_cli). Exit codes follow the Claude Code hook contract:
 
-    0  allow: not a claim, or the Issue is on the active or next item
-    2  block: the guard refused, or the queue could not be read (fail
-       closed); the reason goes to stderr, which the agent sees
+    0  allow: not a claim, the Issue is on the queue, or it was not and
+       the hook queued it at the top with std's `claim` (std #331: the
+       queue is the plan, not a lock; adding work is one step)
+    2  block: the queue could not be read or written (fail closed); the
+       reason goes to stderr, which the agent sees
 
 Non-claim calls return at once without any network call. Registered by
 `ae bootstrap` (install.machine.stage_hooks) in ~/.claude/settings.json.
@@ -73,6 +75,22 @@ def main(stdin=sys.stdin):
     if result.returncode == 0:
         return 0
     reason = (result.stderr or result.stdout).strip() or "exit %d" % result.returncode
+    if result.returncode == 1:
+        # Refused only because the Issue is not queued: queue it, then allow.
+        try:
+            with queue_cli.queue_cli() as cli:
+                added = subprocess.run([sys.executable, "-I", cli, "claim", ref],
+                                       capture_output=True, text=True, timeout=120)
+        except queue_cli.QueueUnavailable as exc:
+            added = None
+            reason += " (and the queue could not be fetched to add it: %s)" % exc
+        if added is not None and added.returncode == 0:
+            print("queue guard: %s was not queued; added it at the top (%s)"
+                  % (ref, (added.stdout or "").strip().replace("\n", "; ")))
+            return 0
+        if added is not None:
+            reason += " (and adding it failed: %s)" % (
+                (added.stderr or added.stdout).strip() or "exit %d" % added.returncode)
     sys.stderr.write("queue guard: claim of %s blocked. %s\n" % (ref, reason))
     return BLOCK
 

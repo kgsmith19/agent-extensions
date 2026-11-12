@@ -42,11 +42,20 @@ sys.exit(code)
 '''
 
 
-def make_stub(directory: Path, modules=("queue_core", "queue_store")) -> Path:
+CONVENTIONS_STUB = r'''
+import os, sys
+open(os.environ["STUB_LOG"], "a").write("conventions " + " ".join(sys.argv[1:]) + "\n")
+print("conventions stub")
+sys.exit(int(os.environ.get("STUB_CONVENTIONS_EXIT", "0")))
+'''
+
+
+def make_stub(directory: Path, modules=("queue_core", "queue_store", "conventions")) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "work_queue.py").write_text(STUB, encoding="utf-8")
     for module in modules:
-        (directory / (module + ".py")).write_text("OK = True\n", encoding="utf-8")
+        body = CONVENTIONS_STUB if module == "conventions" else "OK = True\n"
+        (directory / (module + ".py")).write_text(body, encoding="utf-8")
     return directory
 
 
@@ -145,6 +154,32 @@ def test_forwarding_unavailable_exits_5(tmp_path):
     result = run(["next"], {"AE_QUEUE_BASE_URL": (tmp_path / "nowhere").as_uri()}, tmp_path)
     assert result.returncode == 5
     assert "work_queue" in result.stderr or "queue_core" in result.stderr
+
+
+def test_conventions_forwards_to_std_conventions(tmp_path, fetched):
+    """std #333: `conventions ...` runs std's conventions.py with the same args and exit code."""
+    result = run(["conventions", "check-pr", "--event", "e.json"],
+                 dict(fetched, STUB_CONVENTIONS_EXIT="1"), tmp_path)
+    assert result.returncode == 1
+    assert calls(tmp_path) == ["conventions check-pr --event e.json"]
+    assert result.stdout.strip() == "conventions stub"
+
+
+def test_conventions_unavailable_exits_5(tmp_path):
+    """std #333: an unreachable std fails the convention check closed (exit 5), never 0."""
+    result = run(["conventions", "check-pr"],
+                 {"AE_QUEUE_BASE_URL": (tmp_path / "nowhere").as_uri()}, tmp_path)
+    assert result.returncode == 5
+
+
+def test_queue_commands_work_without_conventions(tmp_path):
+    """An older std (or a stub) without conventions.py still serves every queue command."""
+    stub = make_stub(tmp_path / "old", modules=("queue_core", "queue_store"))
+    result = run(["brief"], {"AE_QUEUE_BASE_URL": stub.as_uri()}, tmp_path)
+    assert result.returncode == 0, result.stderr
+    result = run(["conventions", "check-pr"], {"AE_QUEUE_BASE_URL": stub.as_uri()}, tmp_path)
+    assert result.returncode == 5
+    assert "conventions.py" in result.stderr
 
 
 def test_ae_queue_subcommand_forwards(tmp_path, fetched):
