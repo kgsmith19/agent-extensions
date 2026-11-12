@@ -31,9 +31,11 @@ import tempfile
 import urllib.request
 
 QUEUE_BASE_URL = "https://raw.githubusercontent.com/kgsmith19/agent-engineering-standard/main/tools"
-# conventions.py (std #333) is the shared naming/linking rule; `conventions`
-# below forwards to it, and std's guard uses it to derive a PR's Issue.
-QUEUE_MODULES = ("queue_core.py", "queue_store.py", "work_queue.py", "conventions.py")
+QUEUE_MODULES = ("queue_core.py", "queue_store.py", "work_queue.py")
+# conventions.py (std #333) is the shared naming/linking rule. Fetched when
+# present: std's guard uses it to derive a PR's Issue, and `conventions`
+# below needs it. Queue commands never fail for its absence.
+OPTIONAL_MODULES = ("conventions.py",)
 EXIT_TRANSPORT = 5
 _ACTIVE = re.compile(r"^Q\d+ \[active\] ")
 
@@ -58,6 +60,14 @@ def queue_cli(env=None):
                     data = response.read()
             except (OSError, ValueError) as exc:
                 raise QueueUnavailable("could not fetch %s from %s: %s" % (module, base, exc))
+            with open(os.path.join(tmp, module), "wb") as handle:
+                handle.write(data)
+        for module in OPTIONAL_MODULES:
+            try:
+                with urllib.request.urlopen("%s/%s" % (base, module), timeout=20) as response:
+                    data = response.read()
+            except (OSError, ValueError):
+                continue
             with open(os.path.join(tmp, module), "wb") as handle:
                 handle.write(data)
         yield os.path.join(tmp, "work_queue.py")
@@ -132,6 +142,8 @@ def forward_conventions(args, env=None):
     try:
         with queue_cli(env) as cli:
             tool = os.path.join(os.path.dirname(cli), "conventions.py")
+            if not os.path.isfile(tool):
+                raise QueueUnavailable("std's conventions.py is not available next to %s" % cli)
             return subprocess.call([sys.executable, "-I", tool, *args])
     except QueueUnavailable as exc:
         sys.stderr.write("ae conventions: %s\n" % exc)

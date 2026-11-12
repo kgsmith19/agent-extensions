@@ -59,7 +59,7 @@ n="$(grep -c 'export PATH="$HOME/bin:$PATH"' "$envfile" || true)"
 # AC3: queue head printed under the fixed header
 fresh_home
 run "$SCRATCH/env5"
-echo "$OUT" | grep -q "== Execution queue (binding order) ==" || failures+=("AC3: queue header missing: $OUT")
+echo "$OUT" | grep -q "== Execution queue (work from the top) ==" || failures+=("AC3: queue header missing: $OUT")
 echo "$OUT" | grep -q "Q07 \[pending\] next thing" || failures+=("AC3: queue head missing: $OUT")
 
 # AC3 + AC4: failing queue command degrades, exit stays 0

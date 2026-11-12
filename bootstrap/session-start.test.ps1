@@ -67,7 +67,7 @@ if ($r.Out -notmatch "path: skipped") { $failures += "missing 'path: skipped': $
 # queue head under the fixed header; failing queue and provisioning degrade, exit 0
 Reset-Home
 $r = Invoke-SessionStart @{ AE_SESSION_PROVISION_CMD = "exit 0"; AE_QUEUE_CMD = $queueHead }
-if ($r.Out -notmatch "== Execution queue \(binding order\) ==") { $failures += "queue header missing: $($r.Out)" }
+if ($r.Out -notmatch "== Execution queue \(work from the top\) ==") { $failures += "queue header missing: $($r.Out)" }
 if ($r.Out -notmatch "Q07 \[pending\] next thing") { $failures += "queue head missing: $($r.Out)" }
 $r = Invoke-SessionStart @{ AE_SESSION_PROVISION_CMD = "exit 7"; AE_QUEUE_CMD = "Write-Error boom; exit 5" }
 if ($r.Code -ne 0) { $failures += "failures changed the exit code to $($r.Code)" }

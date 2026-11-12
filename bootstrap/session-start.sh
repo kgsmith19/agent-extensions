@@ -78,7 +78,7 @@ else
 fi
 
 # 4. queue -------------------------------------------------------------------
-echo "== Execution queue (binding order) =="
+echo "== Execution queue (work from the top) =="
 if [ -n "${AE_QUEUE_CMD:-}" ]; then
   queue_out="$(bash -c "$AE_QUEUE_CMD" 2>&1)"
 else

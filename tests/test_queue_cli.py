@@ -172,6 +172,16 @@ def test_conventions_unavailable_exits_5(tmp_path):
     assert result.returncode == 5
 
 
+def test_queue_commands_work_without_conventions(tmp_path):
+    """An older std (or a stub) without conventions.py still serves every queue command."""
+    stub = make_stub(tmp_path / "old", modules=("queue_core", "queue_store"))
+    result = run(["brief"], {"AE_QUEUE_BASE_URL": stub.as_uri()}, tmp_path)
+    assert result.returncode == 0, result.stderr
+    result = run(["conventions", "check-pr"], {"AE_QUEUE_BASE_URL": stub.as_uri()}, tmp_path)
+    assert result.returncode == 5
+    assert "conventions.py" in result.stderr
+
+
 def test_ae_queue_subcommand_forwards(tmp_path, fetched):
     """AC3: the installed `ae` launcher exposes the queue as `ae queue <args>`."""
     env = {"PATH": os.environ["PATH"], "HOME": str(tmp_path / "home"),

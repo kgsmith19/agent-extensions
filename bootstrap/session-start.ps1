@@ -92,7 +92,7 @@ if (-not $EnvFile) {
 }
 
 # 4. queue -------------------------------------------------------------------
-Write-Output "== Execution queue (binding order) =="
+Write-Output "== Execution queue (work from the top) =="
 if ($env:AE_QUEUE_CMD) {
     $r = Invoke-Override $env:AE_QUEUE_CMD
 } else {
