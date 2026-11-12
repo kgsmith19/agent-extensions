@@ -28,7 +28,6 @@ def _load(name):
 
 gate = _load("gate")
 script_tests = _load("script_tests")
-policy = _load("policy")
 
 JOBS = {"policy", "pytest", "shell", "pwsh", "hygiene"}
 
@@ -138,22 +137,12 @@ def test_runner_fails_when_nothing_was_discovered(tmp_path):
 # --- PR policy (AC4) -------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "body",
-    ["Closes #64", "## Related\n\nFixes #12\n", "resolves #3 and more"],
-)
-def test_policy_accepts_closing_keyword_and_issue_branch(body):
-    assert policy.check(body, "issue/64-ci-pr-gate") == []
-
-
-@pytest.mark.parametrize("body", ["", "Related to #64", "Closes #", "closes#64x"])
-def test_policy_rejects_body_without_closing_keyword(body):
-    assert any("closing keyword" in p for p in policy.check(body, "issue/64-x"))
-
-
-@pytest.mark.parametrize("ref", ["fix/thing", "issue/64", "issue/x-y", "issue/64-Bad", "main"])
-def test_policy_rejects_non_issue_branch(ref):
-    assert any("issue/<n>-<slug>" in p for p in policy.check("Closes #64", ref))
+def test_policy_job_uses_the_standards_shared_conventions_rule():
+    """std #333: the linked-Issue rule is std's conventions.py, not a local copy that can drift."""
+    text = (ROOT / ".github" / "workflows" / "pr-gate.yml").read_text(encoding="utf-8")
+    assert ('python3 -I agent_extensions/queue_cli.py conventions check-pr --event "$GITHUB_EVENT_PATH"'
+            in text)
+    assert "issue/\\d+-" not in text and not (CI / "policy.py").exists()
 
 
 # --- declared dependencies (AC1) -------------------------------------------

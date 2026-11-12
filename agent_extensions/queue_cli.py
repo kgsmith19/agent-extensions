@@ -6,6 +6,8 @@ harness and the `ae` launcher share one path:
 
     python3 -I agent_extensions/queue_cli.py brief      # session start
     python3 -I agent_extensions/queue_cli.py <args...>  # forwarded verbatim
+    python3 -I agent_extensions/queue_cli.py conventions <args...>  # std's
+                                                    # conventions.py (#333)
     ae queue <args...>                              # same, via the launcher
 
 The CLI is the local standard checkout (`$AES_STANDARD_DIR/tools`) when
@@ -29,7 +31,9 @@ import tempfile
 import urllib.request
 
 QUEUE_BASE_URL = "https://raw.githubusercontent.com/kgsmith19/agent-engineering-standard/main/tools"
-QUEUE_MODULES = ("queue_core.py", "queue_store.py", "work_queue.py")
+# conventions.py (std #333) is the shared naming/linking rule; `conventions`
+# below forwards to it, and std's guard uses it to derive a PR's Issue.
+QUEUE_MODULES = ("queue_core.py", "queue_store.py", "work_queue.py", "conventions.py")
 EXIT_TRANSPORT = 5
 _ACTIVE = re.compile(r"^Q\d+ \[active\] ")
 
@@ -123,10 +127,23 @@ def forward(args, env=None):
         return EXIT_TRANSPORT
 
 
+def forward_conventions(args, env=None):
+    """Run std's conventions.py (fetched with the queue modules) with ``args``."""
+    try:
+        with queue_cli(env) as cli:
+            tool = os.path.join(os.path.dirname(cli), "conventions.py")
+            return subprocess.call([sys.executable, "-I", tool, *args])
+    except QueueUnavailable as exc:
+        sys.stderr.write("ae conventions: %s\n" % exc)
+        return EXIT_TRANSPORT
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv == ["brief"]:
         return brief()
+    if argv[:1] == ["conventions"]:
+        return forward_conventions(argv[1:])
     return forward(argv)
 
 

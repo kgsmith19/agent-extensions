@@ -60,7 +60,7 @@ full design rationale.
 Every PR runs `.github/workflows/pr-gate.yml`; its aggregating
 `agent-extensions PR Gate` job is the only required check on `main` and
 passes only when every job concluded exactly `success` at the exact PR head.
-PRs come from `issue/<n>-<slug>` branches and carry `Closes #<n>`.
+PRs link their Issue: a `Closes #<n>` line, or an Issue derivable from an `issue/<n>-<slug>` branch or a title ending `(#N)` (std #333). `issue/<n>-<slug>` is the recommended branch name, not a gate; `ae queue conventions pr-body --issue N` prints a complete PR body.
 Reproduce the Gate locally before pushing:
 
     python -m pip install -r requirements-dev.txt   # pinned; incl. pydantic, ruff

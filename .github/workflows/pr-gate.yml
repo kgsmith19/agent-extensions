@@ -30,14 +30,15 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Require closing keyword and issue/<n>-<slug> branch
+      # One rule with the Standard (std #333): the PR fails only when no Issue
+      # can be found (a 'Closes #N' line, an issue/<n>- branch, or a title
+      # ending "(#N)"). The branch name itself is advice. std's
+      # conventions.py, fetched from std main with the queue modules.
+      - name: Require a linked Issue
         if: github.event_name == 'pull_request'
-        env:
-          PR_BODY: ${{ github.event.pull_request.body }}
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
-        run: python3 .github/ci/policy.py
-      # Queue v2 guard (#74; std#287): every Issue this PR closes must be on
-      # the active item of the owner's execution queue, unless the owner
+        run: python3 -I agent_extensions/queue_cli.py conventions check-pr --event "$GITHUB_EVENT_PATH"
+      # Queue v2 guard (#74; std#287, #331): every Issue this PR closes must be
+      # on the owner's execution queue in any live status, unless the owner
       # applied owner:queue-exempt. std's guard, fetched from std main.
       - name: Work matches the execution queue
         if: github.event_name == 'pull_request'

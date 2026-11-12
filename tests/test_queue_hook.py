@@ -3,7 +3,8 @@
 The claim protocol's atomic step is creating the Issue's `issue/<n>-<slug>`
 branch. The hook recognises that step in a PreToolUse payload, runs std's
 `work_queue.py guard --claim` for the Issue, and blocks (exit 2, reason on
-stderr) unless the Issue is on the active or next queue item. Everything
+stderr) only when the queue cannot be read or written. An Issue that is not
+queued is added at the top with std's `claim` (std #331) and allowed. Everything
 else passes immediately without touching the network. Tested black-box
 against a stub std CLI served over file://, as in test_queue_cli.py.
 """
@@ -26,16 +27,24 @@ import os, sys
 open(os.environ["STUB_LOG"], "a").write(" ".join(sys.argv[1:]) + "\n")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import queue_core, queue_store
+if sys.argv[1] == "claim":
+    code = int(os.environ.get("STUB_CLAIM_EXIT", "0"))
+    if code:
+        sys.stderr.write("cannot write the queue\n")
+    else:
+        print("top: Q90")
+        print("ok")
+    sys.exit(code)
 code = int(os.environ.get("STUB_GUARD_EXIT", "0"))
 if code:
-    sys.stderr.write("refused: guard: claim of %s refused, it is not on the active or next queue item\n" % sys.argv[-1])
+    sys.stderr.write("refused: guard: %s is not on the queue. Add it in one step: `work_queue.py claim %s`\n" % (sys.argv[-1], sys.argv[-1]))
 else:
     print("guard: ok, %s is on Q32 (active)" % sys.argv[-1])
 sys.exit(code)
 '''
 
 
-def served(tmp_path, modules=("queue_core.py", "queue_store.py", "work_queue.py")):
+def served(tmp_path, modules=("queue_core.py", "queue_store.py", "work_queue.py", "conventions.py")):
     d = tmp_path / "served"
     d.mkdir()
     for m in modules:
@@ -77,19 +86,29 @@ def test_claim_ref_recognises_both_atomic_claim_routes():
 
 
 def test_allowed_claim_passes(tmp_path):
-    """AC1: a claim on the active or next item proceeds (exit 0)."""
+    """AC1: a claim on a queued Issue proceeds (exit 0)."""
     result, calls = run_hook(CREATE_BRANCH, tmp_path, AE_QUEUE_BASE_URL=served(tmp_path))
     assert result.returncode == 0, result.stderr
     assert calls == ["guard --claim kgsmith19/hyperbolic-core#426"]
 
 
-def test_refused_claim_is_blocked_with_the_guards_reason(tmp_path):
-    """AC1: out-of-order work is stopped before the branch exists, and the agent is told why."""
+def test_unqueued_claim_is_queued_at_the_top_and_allowed(tmp_path):
+    """std #331: an Issue that is not queued is added with `claim`, then the branch proceeds."""
     result, calls = run_hook(CREATE_BRANCH, tmp_path, AE_QUEUE_BASE_URL=served(tmp_path),
                              STUB_GUARD_EXIT="1")
+    assert result.returncode == 0, result.stderr
+    assert calls == ["guard --claim kgsmith19/hyperbolic-core#426",
+                     "claim kgsmith19/hyperbolic-core#426"]
+    assert "added it at the top" in result.stdout
+
+
+def test_unqueued_claim_that_cannot_be_added_is_blocked_with_both_reasons(tmp_path):
+    """If queueing fails, the branch is blocked and the agent sees why, never a silent allow."""
+    result, _ = run_hook(CREATE_BRANCH, tmp_path, AE_QUEUE_BASE_URL=served(tmp_path),
+                         STUB_GUARD_EXIT="1", STUB_CLAIM_EXIT="1")
     assert result.returncode == 2
     assert "kgsmith19/hyperbolic-core#426" in result.stderr
-    assert "not on the active or next queue item" in result.stderr
+    assert "cannot write the queue" in result.stderr
 
 
 def test_unreadable_queue_fails_closed(tmp_path):

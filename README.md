@@ -65,9 +65,11 @@ code preserved: 3 means the queue is empty, 5 means std could not be reached.
 Claims are guarded in the harness too: `ae bootstrap` registers
 `agent_extensions/queue_hook.py` as a Claude Code `PreToolUse` hook (matcher
 `mcp__github__create_branch|Bash`). Creating an `issue/<n>-<slug>` branch,
-the claim protocol's atomic step, is blocked (exit 2, with the reason) unless
-`work_queue.py guard --claim` accepts that Issue. It is also blocked when the
-queue cannot be read. Every other tool call passes without a network call.
+the claim protocol's atomic step, runs `work_queue.py guard --claim`. When the
+Issue is not queued yet, the hook queues it at the top with std's `claim` and
+lets the branch through (std #331). It blocks (exit 2, with the reason) only
+when the queue cannot be read or written. Every other tool call passes without
+a network call.
 
 Where std's CLI comes from: a local agent-engineering-standard checkout when
 `AES_STANDARD_DIR` points at it, otherwise every queue module is fetched from
