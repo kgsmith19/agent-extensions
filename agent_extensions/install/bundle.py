@@ -47,7 +47,6 @@ BUNDLE_LAYOUT: dict[str, tuple[str, ...]] = {
     "AGENT_HARNESS_README_MD": (".config", "agents", "README.md"),
     "AGENT_HARNESS_AGENTS_MD": (".config", "agents", "AGENTS.md"),
     "AGENT_FETCH_AGENT_SECRETS_PS1": (".config", "agents", "fetch-agent-secrets.ps1"),
-    "AGENT_MINT_GITHUB_APP_TOKEN_MJS": (".config", "agents", "mint-github-app-token.mjs"),
 }
 
 AGENTS_DIR = (".config", "agents")

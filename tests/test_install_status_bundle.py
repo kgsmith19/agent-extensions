@@ -5,7 +5,7 @@ form and compared with the provider's value (or, without an identity, with the
 last bootstrap receipt). The provider client is faked. These tests pin the
 per-key MATCH / DRIFT / MISSING table, the exit-code contract harnesses gate
 on (0 ok, 1 drift or missing, 2 provider unreachable), the read-only
-guarantee, the mint-capability line, and that no value or token is printed.
+guarantee, and that no value or token is printed.
 """
 import hashlib
 import io
@@ -23,7 +23,6 @@ VALUES = {
     "AGENT_HARNESS_README_MD": "# Harness README\nLEAKCANARY-README",
     "AGENT_HARNESS_AGENTS_MD": "# Harness dir\nLEAKCANARY-DIR",
     "AGENT_FETCH_AGENT_SECRETS_PS1": "Write-Output 'LEAKCANARY-PS1'",
-    "AGENT_MINT_GITHUB_APP_TOKEN_MJS": "console.log('LEAKCANARY-MJS')",
 }
 
 TOKEN = "TOKENCANARY-abc"
@@ -182,7 +181,7 @@ def test_an_undecodable_local_file_is_drift_not_a_crash(home, seed):
     assert report.exit_code == 1
 
 
-# --- AC2: provider reachability, token TTL, mint capability -----------------
+# --- AC2: provider reachability and token TTL --------------------------------
 
 def test_reachable_provider_reports_the_token_ttl_never_the_token(home, seed):
     _materialize(home, seed)
@@ -214,40 +213,16 @@ def test_an_unreadable_seed_exits_2_without_echoing_it(home, tmp_path):
     assert client.calls == []
 
 
-def test_mint_is_ready_when_script_node_and_dev_app_keys_are_all_present(home, seed):
+def test_no_github_app_mint_key_or_line_remains(home, seed):
+    """Owner decision 2026-11-13: GitHub Apps are retired, so the bundle has no mint script
+    and status prints no mint line."""
+    from agent_extensions.install.bundle import BUNDLE_LAYOUT
+
+    assert not [k for k in BUNDLE_LAYOUT if "GITHUB_APP" in k]
     _materialize(home, seed)
     report, client = _verify(home, seed)
-    assert ("list_keys", "/dev/") in client.calls
-    assert report.mint.startswith("ready")
-
-
-def test_mint_names_each_missing_piece_and_never_changes_the_exit_code(home, seed):
-    _materialize(home, seed)
-    (home / ".config" / "agents" / "mint-github-app-token.mjs").unlink()
-    keys = {"DEV_GITHUB_APP_ID"}
-    report, _ = _verify(home, seed, client=FakeClient(dev_keys=keys), node=False)
-    assert report.mint.startswith("unavailable")
-    for piece in ("mint-github-app-token.mjs", "node", "DEV_GITHUB_APP_PRIVATE_KEY"):
-        assert piece in report.mint
-    assert "DEV_GITHUB_APP_ID" not in report.mint.split("missing", 1)[1]
-    # The script's absence is already MISSING in the table; the mint line is informational.
-    assert report.exit_code == 1
-    assert _rows(report)["AGENT_MINT_GITHUB_APP_TOKEN_MJS"] == "MISSING"
-
-
-def test_mint_alone_never_fails_status(home, seed):
-    _materialize(home, seed)
-    report, _ = _verify(home, seed, client=FakeClient(dev_keys=set()), node=False)
-    assert report.mint.startswith("unavailable")
-    assert report.exit_code == 0
-
-
-def test_a_dev_path_listing_error_is_mint_unknown_not_a_failure(home, seed):
-    from agent_extensions.install.bundle import ProviderError
-
-    _materialize(home, seed)
-    report, _ = _verify(home, seed, client=FakeClient(list_error=ProviderError("secret provider returned HTTP 403")))
-    assert report.mint.startswith("unknown") and "HTTP 403" in report.mint
+    assert "mint" not in _text(report)
+    assert not [c for c in client.calls if c[0] == "list_keys"]
     assert report.exit_code == 0
 
 
@@ -305,7 +280,7 @@ def test_status_never_writes_anything(home, seed):
 def test_status_makes_only_read_calls(home, seed):
     _materialize(home, seed)
     _, client = _verify(home, seed)
-    assert client.calls == ["login_with_ttl", "fetch_root", ("list_keys", "/dev/")]
+    assert client.calls == ["login_with_ttl", "fetch_root"]
 
 
 def test_no_bundle_value_token_or_seed_secret_appears_in_output(home, seed):

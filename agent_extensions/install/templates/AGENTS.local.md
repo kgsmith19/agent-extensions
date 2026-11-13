@@ -35,8 +35,8 @@ If rules conflict, follow the higher source and mention the conflict once.
 
 - Never paste, print, commit, or log secret values. Secrets live in the
   configured secret provider (see `~/.config/agents/config.yaml`).
-- Governed repo mutations use the `dev-agent` identity minted from the secret
-  provider; owner credentials are break-glass only.
+- Repo mutations use the scoped CLI credential the secret provider holds for
+  agents; GitHub Apps are retired (no App tokens).
 - The machine guard (`.claude/settings.local.json` → agent-extensions guard)
   blocks secret-pattern writes and protected-branch pushes at the tool layer.
 

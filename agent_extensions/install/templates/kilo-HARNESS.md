@@ -9,6 +9,6 @@ Use this file only for Kilo-specific integration. Do not duplicate global rules 
 
 - Runtime: `kilo.jsonc` in this directory (model/provider/permissions).
 - Bootstrap identity only: `.env` (`INFISICAL_CLIENT_ID`, `INFISICAL_CLIENT_SECRET`, `INFISICAL_PROJECT_ID`).
-- Mint repo tokens: `pwsh -NoProfile -File "$env:USERPROFILE\.config\agents\fetch-agent-secrets.ps1" -Agent dev-agent -Output gh`
+- Repo access: the `gh` CLI, authenticated with the scoped CLI token from the secret provider (GitHub Apps are retired).
 
 Repo-specific Kilo notes belong in that repo, not here.

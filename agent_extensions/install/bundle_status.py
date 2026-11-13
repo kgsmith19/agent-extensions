@@ -42,10 +42,6 @@ from agent_extensions.install.bundle import (
 MATCH, DRIFT, MISSING = "MATCH", "DRIFT", "MISSING"
 EXIT_OK, EXIT_DRIFT, EXIT_UNREACHABLE = 0, 1, 2
 
-# Dev-agent GitHub App credentials (hyperbolic-core dev-agent-dispatch.yml reads them here).
-DEV_APP_PATH = "/dev/"
-DEV_APP_KEYS = ("DEV_GITHUB_APP_ID", "DEV_GITHUB_APP_PRIVATE_KEY")
-MINT_KEY = "AGENT_MINT_GITHUB_APP_TOKEN_MJS"
 
 
 @dataclass
@@ -63,7 +59,6 @@ class BundleStatus:
     source: str  # "provider" | "receipt" | "none"
     provider: str
     rows: list[KeyRow] = field(default_factory=list)
-    mint: str = "not checked"
     exit_code: int = EXIT_OK
     converge: str = "ae bootstrap"
 
@@ -76,7 +71,6 @@ class BundleStatus:
                 f"{row.state:8} bundle/{row.key}: {row.path} "
                 f"(local {row.local or '-'}, {reference} {row.expected or '-'}{note})"
             )
-        out.append(f"{'info':8} bundle/mint: {self.mint}")
         if self.exit_code != EXIT_OK:
             out.append(f"converge: {self.converge}")
         return out
@@ -119,23 +113,6 @@ def _redact(message: str, identity: Mapping[str, str]) -> str:
     return message
 
 
-def _mint(home: Path, client, token: str, project_id: str, which: Callable[[str], str | None]) -> str:
-    """Can this machine mint a dev-agent App token? Checks the pieces; never mints, never reads a value."""
-    missing = []
-    if not home.joinpath(*BUNDLE_LAYOUT[MINT_KEY]).is_file():
-        missing.append("~/" + "/".join(BUNDLE_LAYOUT[MINT_KEY]))
-    if which("node") is None:
-        missing.append("node")
-    try:
-        keys = client.list_keys(token, project_id, DEV_APP_PATH)
-    except Exception as exc:  # noqa: BLE001 — informational line, never fails status
-        return f"unknown (cannot list {DEV_APP_PATH}: {type(exc).__name__}: {exc})"
-    missing += [f"{k} at {DEV_APP_PATH}" for k in DEV_APP_KEYS if k not in keys]
-    if missing:
-        return "unavailable (missing: " + ", ".join(missing) + ")"
-    return f"ready (mint script, node, {' + '.join(DEV_APP_KEYS)} provisioned at {DEV_APP_PATH}; no token minted)"
-
-
 def _exit_for(rows: list[KeyRow]) -> int:
     return EXIT_DRIFT if any(r.state != MATCH for r in rows) else EXIT_OK
 
@@ -148,7 +125,11 @@ def verify(
     client=None,
     which: Callable[[str], str | None] = shutil.which,
 ) -> BundleStatus:
-    """Compare every bundle key's local file with its source. Never writes, never raises."""
+    """Compare every bundle key's local file with its source. Never writes, never raises.
+
+    ``which`` is accepted for callers' compatibility; nothing probes local tools since the
+    GitHub App mint check was retired (owner decision 2026-11-13: CLI credentials, no Apps)."""
+    del which
     environment = os.environ if env is None else env
     converge = f"ae bootstrap --seed {seed_path}" if seed_path is not None else "ae bootstrap"
     try:
@@ -173,7 +154,6 @@ def verify(
             "receipt",
             "not checked (no seed or INFISICAL_* identity); compared with the last bootstrap receipt",
             rows,
-            mint="not checked (no identity)",
             exit_code=_exit_for(rows),
             converge=converge,
         )
@@ -187,21 +167,18 @@ def verify(
         return BundleStatus(
             "provider",
             f"unreachable ({message}); no key verified",
-            mint="not checked (provider unreachable)",
             exit_code=EXIT_UNREACHABLE,
             converge=converge,
         )
     # Hash in memory; the values themselves go no further.
     cloud = {key: _canonical_sha(value) for key, value in values.items() if key in BUNDLE_LAYOUT}
     rows = [_row(home, key, cloud.get(key), f"provider has no {key}") for key in BUNDLE_LAYOUT]
-    mint = _redact(_mint(home, provider, token, identity["INFISICAL_PROJECT_ID"], which), identity)
     api = environment.get("INFISICAL_API_URL", DEFAULT_API)
     ttl_text = f"token TTL {ttl}s" if ttl is not None else "token TTL not reported"
     return BundleStatus(
         "provider",
         f"reachable ({api}), {ttl_text}",
         rows,
-        mint=mint,
         exit_code=_exit_for(rows),
         converge=converge,
     )
