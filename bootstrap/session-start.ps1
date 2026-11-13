@@ -76,6 +76,21 @@ if ($env:INFISICAL_CLIENT_ID -and $env:INFISICAL_CLIENT_SECRET -and $env:INFISIC
     Write-Output "bundle: skipped (no INFISICAL_* identity in the environment)"
 }
 
+# 2b. inventory --------------------------------------------------------------
+if ($env:AE_SESSION_INVENTORY_CMD) {
+    $r = Invoke-Override $env:AE_SESSION_INVENTORY_CMD
+} else {
+    $env:PYTHONPATH = $RepoRoot + $(if ($env:PYTHONPATH) { [IO.Path]::PathSeparator + $env:PYTHONPATH })
+    $out = & $Python -m agent_extensions.inventory --write --summary 2>&1 | Out-String
+    $r = @{ Out = $out; Code = $LASTEXITCODE }
+}
+if ($r.Code -eq 0) {
+    Write-Output (Get-LastLine $r.Out)
+    Write-Output "Read ~/.agents/inventory.md before your first task (names only; never print a value)."
+} else {
+    Write-Output "inventory: degraded (exit $($r.Code): $(Get-LastLine $r.Out))"
+}
+
 # 3. path --------------------------------------------------------------------
 $pathLine = 'export PATH="$HOME/bin:$PATH"'
 if (-not $EnvFile) {

@@ -11,13 +11,16 @@
 #                 issue #60): idempotent, prints key names only, never values
 # 3. path       — append `export PATH="$HOME/bin:$PATH"` to FILE once, so the
 #                 harness exports it for the rest of the session
-# 4. queue      — print the owner's execution queue: active item, next item
+# 4. inventory  — names-only inventory of credentials (env + secret stores), what
+#                 each is for, and CLIs on PATH; writes ~/.agents/inventory.md,
+#                 which every agent reads before its first task
+# 5. queue      — print the owner's execution queue: active item, next item
 #                 and handoff (agent_extensions/queue_cli.py brief)
 #
 # Every step reports ok / present / skipped / degraded and the script always
 # exits 0: a missing network or tool degrades the session, never blocks it.
 # Overrides (used by tests): AE_SESSION_PROVISION_CMD, AE_SESSION_BUNDLE_CMD, AE_QUEUE_CMD,
-# AE_QUEUE_BASE_URL (where queue_cli.py fetches std's queue modules from).
+# AE_SESSION_INVENTORY_CMD, AE_QUEUE_BASE_URL (where queue_cli.py fetches std's queue modules from).
 # PowerShell twin: bootstrap/session-start.ps1.
 set -uo pipefail
 
@@ -77,7 +80,17 @@ else
   echo "path: degraded (cannot write $ENV_FILE)"
 fi
 
-# 4. queue -------------------------------------------------------------------
+# 4. inventory ---------------------------------------------------------------
+inventory_out="$(bash -c "${AE_SESSION_INVENTORY_CMD:-cd '$REPO_ROOT' && python3 -m agent_extensions.inventory --write --summary}" 2>&1)"
+rc=$?
+if [ $rc -eq 0 ]; then
+  printf '%s\n' "$inventory_out" | tail -n 1
+  echo "Read ~/.agents/inventory.md before your first task (names only; never print a value)."
+else
+  echo "inventory: degraded (exit $rc: $(printf '%s\n' "$inventory_out" | tail -n 1))"
+fi
+
+# 5. queue -------------------------------------------------------------------
 echo "== Execution queue (work from the top) =="
 if [ -n "${AE_QUEUE_CMD:-}" ]; then
   queue_out="$(bash -c "$AE_QUEUE_CMD" 2>&1)"

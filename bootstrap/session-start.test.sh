@@ -34,6 +34,9 @@ fresh_home
 run "$SCRATCH/env1"
 [ "$(grep -c provision "$SCRATCH/calls" || true)" = "1" ] || failures+=("AC1: empty HOME did not provision exactly once")
 echo "$OUT" | grep -q "provision: ok" || failures+=("AC1: missing 'provision: ok' report: $OUT")
+# Inventory runs on every start (no store identity here, so stores are skipped) and points at the file.
+echo "$OUT" | grep -q "^inventory: ok (" || failures+=("inventory: missing 'inventory: ok' line: $OUT")
+[ -f "$SCRATCH/home/.agents/inventory.md" ] || failures+=("inventory: ~/.agents/inventory.md not written")
 
 # AC1: skips when skills and launcher are present
 fresh_home
