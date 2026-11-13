@@ -297,34 +297,13 @@ def test_output_logs_names_not_values(tmp_path):
     assert fake.variables["ORG_NAME"] == "DECL-SENTINEL-4"
 
 
-# 14. workflow: dispatch-only, permissions {}, no PAT, pinned actions, fail-closed message
-def test_workflow_permissions_fail_closed_and_no_pat():
-    text = (REPO_ROOT / ".github/workflows/apply-github-settings.yml").read_text(encoding="utf-8")
-
-    assert re.search(r"^permissions:\s*\{\}\s*$", text, re.M), "top-level permissions must be {}"
-    assert re.search(r"^on:\s*\n\s+workflow_dispatch:", text, re.M), "trigger must be workflow_dispatch"
-    assert not re.search(r"^\s{2}(push|pull_request|pull_request_target|schedule):", text, re.M)
-    assert not re.search(r"secrets\.[A-Za-z0-9_]*PAT", text, re.I)
-    assert "id-token: write" in text
-    assert "/settings-app/" in text
-    assert "SETTINGS_APP_ID" in text and "SETTINGS_APP_PRIVATE_KEY" in text
-    assert "settings App not provisioned (see ext#97)" in text
-    for uses in re.findall(r"^\s*-?\s*uses:\s*(\S+)", text, re.M):
-        assert re.search(r"@[0-9a-f]{40}\b", uses), f"action not pinned to a SHA: {uses}"
-
-
-def test_workflow_mints_the_app_token_and_passes_it_as_gh_token():
-    """The reconcile step gets a settings-App installation token, never a PAT.
-
-    Catches the apply step running with no token (the module then refuses)
-    or with a long-lived credential instead of a minted installation token.
-    """
-    text = (REPO_ROOT / ".github/workflows/apply-github-settings.yml").read_text(encoding="utf-8")
-    mint = re.search(
-        r"id:\s*app-token\s*\n\s*uses:\s*actions/create-github-app-token@[0-9a-f]{40}", text)
-    assert mint, "settings App token must be minted by the pinned create-github-app-token action"
-    reconcile = text.split("Reconcile declared settings", 1)[1]
-    assert "GH_TOKEN: ${{ steps.app-token.outputs.token }}" in reconcile
+# 14. No GitHub App workflow (owner decision 2026-11-13): settings are applied from the CLI
+# with a scoped token (or by the hyper-agents ops broker), never through a minted App token.
+def test_no_github_app_settings_workflow_remains():
+    workflows = REPO_ROOT / ".github" / "workflows"
+    assert not (workflows / "apply-github-settings.yml").exists()
+    for path in workflows.glob("*.y*ml"):
+        assert "create-github-app-token" not in path.read_text(encoding="utf-8"), path.name
 
 
 def test_undeclared_label_description_is_left_untouched():

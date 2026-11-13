@@ -24,7 +24,6 @@ VALUES = {
     "AGENT_HARNESS_README_MD": "# Harness README\nLEAKCANARY-README\n",
     "AGENT_HARNESS_AGENTS_MD": "# Harness dir\nLEAKCANARY-DIR",
     "AGENT_FETCH_AGENT_SECRETS_PS1": "Write-Output 'LEAKCANARY-PS1'\n\n",
-    "AGENT_MINT_GITHUB_APP_TOKEN_MJS": "console.log('LEAKCANARY-MJS')",
 }
 
 EXPECTED_PATHS = {
@@ -33,7 +32,6 @@ EXPECTED_PATHS = {
     "AGENT_HARNESS_README_MD": (".config", "agents", "README.md"),
     "AGENT_HARNESS_AGENTS_MD": (".config", "agents", "AGENTS.md"),
     "AGENT_FETCH_AGENT_SECRETS_PS1": (".config", "agents", "fetch-agent-secrets.ps1"),
-    "AGENT_MINT_GITHUB_APP_TOKEN_MJS": (".config", "agents", "mint-github-app-token.mjs"),
 }
 
 
@@ -191,10 +189,10 @@ def test_provider_failure_fails_the_stage_without_leaking(home, seed):
 
 def test_missing_keys_fail_naming_them_while_present_keys_still_land(home, seed):
     """A bundle missing a key fails naming it, and every present key is still materialized."""
-    partial = {k: v for k, v in VALUES.items() if k != "AGENT_MINT_GITHUB_APP_TOKEN_MJS"}
+    partial = {k: v for k, v in VALUES.items() if k != "AGENT_FETCH_AGENT_SECRETS_PS1"}
     result, _ = _run(home, seed, client=FakeClient(partial))
     assert result.status == "failed"
-    assert "AGENT_MINT_GITHUB_APP_TOKEN_MJS" in result.detail
+    assert "AGENT_FETCH_AGENT_SECRETS_PS1" in result.detail
     assert (home / ".config" / "agents" / "config.yaml").exists()
 
 

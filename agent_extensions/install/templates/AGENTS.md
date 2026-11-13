@@ -63,9 +63,9 @@ If rules conflict, follow the higher source and mention the conflict once.
 - Store secrets in the configured secret provider. Only the machine identity needed to read that provider may remain in local plaintext.
 - When cleaning up scattered local secret/password files, first consolidate unique values into one owner-review file on the Desktop, then delete the scattered originals. Do not print those values in chat, logs, issues, PRs, or command output.
 - Current provider adapters (for example, Infisical and GitHub) are implementation details in `~/.config/agents\README.md` and `config.yaml`; keep global rules vendor-neutral.
-- For governed software-engineering work, Git/repo mutations must use the global `dev-agent` repo identity minted from the secret provider. The owner's interactive repo credential is break-glass/admin only; do not use it for routine agent issue, branch, PR, label, comment, or merge actions unless the owner explicitly says to use the owner credential.
-- If the `dev-agent` repo token cannot be minted, continue only with read-only discovery and report the blocker. Do not silently fall back to owner credentials.
-- Use the global `review-agent` repo identity for independent review comments/findings when a review agent is acting. The implementation names of current Apps are adapter details; the portable roles are `dev-agent` and `review-agent`.
+- Agents work through CLI tools and third-party credentials (PAT, API key, OIDC) that the secret provider holds for them; for Git/repo mutations that is the scoped CLI token the provider stores for agent use. GitHub Apps are retired: never mint App tokens (owner decision 2026-11-13).
+- If the needed CLI credential is missing or lacks a permission, continue with read-only discovery and report the exact missing permission as an owner action.
+- Independent review findings are posted as PR review comments that record the reviewer's provider family and model.
 - The active harness is the source of truth for the builder provider family and model. Select/record a reviewer provider family and model separately, and keep the reviewer provider family different from the builder's for material review. Re-check this whenever the harness provider/model changes.
 - Record provider family, model, and repo identity in work-state comments, PR descriptions, review comments, issue evidence, and handoffs whenever an agent performs governed work.
 - If blocked by permissions, hooks, or a needed secret, do not work around it. Use the documented guard/vault flow or ask for owner action.
