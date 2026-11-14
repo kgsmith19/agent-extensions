@@ -36,6 +36,31 @@ This also syncs Skills and MCP servers from the external marketplaces
 declared in `bootstrap/external-marketplaces.json` — see
 [AGENTS.md](./AGENTS.md#external-marketplaces).
 
+## Environment inventory: read it first
+
+Every session start (step 4 of `bootstrap/session-start.sh`, `.ps1` twin) writes
+`~/.agents/inventory.md` and prints one line about it. Read it before the first
+task. It lists, by **name only**:
+
+- credentials in the environment and in each configured secret store (Infisical
+  is the first `SecretStore` adapter; add a store by adding an adapter), with what
+  each one is for (`agent_extensions/inventory_catalog.json`, data only);
+- retired entries, flagged so nobody uses them;
+- which CLIs are on PATH.
+
+    ae inventory [--write] [--summary] [--json] [--offline]
+
+To use a secret, do not copy it anywhere. Run the command with it:
+
+    ae secret-run --env CF_TOKEN=/:CLOUDFLARE_API_TOKEN -- curl -sS -H "Authorization: Bearer $CF_TOKEN" ...
+
+The value exists only in that child's environment, and its output comes back with
+the value replaced by `[REDACTED:CF_TOKEN]`. This is the same pattern as
+`infisical run` or `op run`, but it works with any store that has an adapter.
+
+To tell agents what a new credential is for, add a catalog row (a name regex,
+the provider, the kind and how to use it). Never put a value in the catalog.
+
 ## Execution queue at every session start
 
 The owner's execution queue (agent-engineering-standard `tools/work_queue.py`,

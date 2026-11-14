@@ -1,4 +1,4 @@
-"""CLI for agent_extensions.install: bootstrap | bundle | update | init [repo] | status | queue | context.
+"""CLI for agent_extensions.install: bootstrap | bundle | update | init [repo] | status | queue | context | inventory | secret-run.
 
 Exit code 0 iff the run's report is ok (no failed stages). status is
 read-only. Its machine-stage lines are informational; its AGENT_* bundle
@@ -145,7 +145,23 @@ def main(argv: list[str] | None = None) -> int:
     p_queue.add_argument("args", nargs=argparse.REMAINDER)
     p_context = sub.add_parser("context", help="bounded contexts (issue #87): new | list | brief | wire")
     p_context.add_argument("args", nargs=argparse.REMAINDER)
+    p_inventory = sub.add_parser(
+        "inventory", help="names-only inventory of credentials, secret-store entries and CLIs (read first)"
+    )
+    p_inventory.add_argument("args", nargs=argparse.REMAINDER)
+    p_secret_run = sub.add_parser(
+        "secret-run", help="run a command with named secrets in its environment only (never printed)"
+    )
+    p_secret_run.add_argument("args", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
+    if args.cmd == "secret-run":
+        from agent_extensions.secret_run import main as secret_run_main
+
+        return secret_run_main(args.args)
+    if args.cmd == "inventory":
+        from agent_extensions.inventory import main as inventory_main
+
+        return inventory_main(args.args)
     if args.cmd == "queue":
         from agent_extensions.queue_cli import main as queue_main
 

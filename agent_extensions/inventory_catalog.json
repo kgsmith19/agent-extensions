@@ -1,0 +1,30 @@
+{
+  "$comment": "What each credential or CLI is for. Data only: providers are named here and in store adapters, never in logic. Match is a regex on the secret NAME (and, for stores, optional path prefix). Never put a value here.",
+  "version": 1,
+  "retired_path_prefixes": ["/retired"],
+  "credentials": [
+    {"match": "^INFISICAL_(CLIENT_ID|CLIENT_SECRET|PROJECT_ID)$", "provider": "infisical", "kind": "secret-store identity", "use": "Machine identity for the secret store. `ae inventory` and `ae bundle` log in with it; read other secrets through the store at call time, never copy them into files."},
+    {"match": "^(GH_TOKEN|GITHUB_TOKEN)$", "provider": "github", "kind": "code host", "use": "Session-scoped GitHub token used by `gh`/git. Scope is whatever the harness granted; prefer the harness's GitHub tools where present."},
+    {"match": "^GITHUB_OPS_PAT$", "provider": "github", "kind": "code host (fleet ops)", "use": "Fleet maintenance PAT. Used by hyper-agents ops broker only; owner renews it yearly."},
+    {"match": "^CLOUDFLARE_API_TOKEN$", "provider": "cloudflare", "kind": "edge / zero trust", "use": "Cloudflare API (https://api.cloudflare.com/client/v4, Bearer): zones, DNS, Tunnels, Access apps and policies. Verify with GET /user/tokens/verify. Write scopes are proven by the first op that uses them."},
+    {"match": "^(CF_ACCESS_AUD|OPS_ACCESS_CLIENT_ID|OPS_ACCESS_CLIENT_SECRET)$", "provider": "cloudflare", "kind": "zero-trust access", "use": "Access application audience / service token for the ops Access app. Deploy tooling only."},
+    {"match": "^TUNNEL_TOKEN$", "provider": "cloudflare", "kind": "tunnel", "use": "Connector token for the core tunnel. Read by the host's tunnel daemon only."},
+    {"match": "^TF_STATE_PASSPHRASE$", "provider": "terraform", "kind": "infra state", "use": "Encrypts infrastructure state. Infra tooling only."},
+    {"match": "^HETZNER_API_TOKEN$", "provider": "hetzner", "kind": "server host", "use": "Server host API (provisioning). Infra tooling only."},
+    {"match": "^(DEPLOY_SSH_PRIVATE_KEY|DEPLOY_SSH_PUBLIC_KEY)$", "provider": "ssh", "kind": "server access", "use": "Deploy SSH key pair for the core host. Deploy tooling only."},
+    {"match": "^(RESTIC_PASSWORD|STORAGEBOX_SSH_KEY)$", "provider": "backup", "kind": "backups", "use": "Backup encryption and target. Backup jobs only."},
+    {"match": "ANTHROPIC_API_KEY$|^LLM_KEYS_ANTHROPIC$", "provider": "anthropic", "kind": "LLM", "use": "Model API key; the prefix (DEV_, REVIEW_, BRAIN_) names the consumer. Use only from the consumer it names."},
+    {"match": "OPENAI_API_KEY$|^LLM_KEYS_OPENAI$|^OPENAI_USAGE_API_KEY$", "provider": "openai", "kind": "LLM", "use": "Model API key; the prefix names the consumer (DEV_, REVIEW_, DEEP_SEARCH_, usage reporting)."},
+    {"match": "GOOGLE_API_KEY$", "provider": "google", "kind": "LLM", "use": "Model API key; the prefix names the consumer."},
+    {"match": "KILO_API_KEY$", "provider": "kilo", "kind": "LLM gateway", "use": "Kilo gateway key for development."},
+    {"match": "^(CLAUDE_CODE_TOKEN|CHATGPT_TOKEN)$", "provider": "lifeos", "kind": "controller token", "use": "Per-controller LifeOS agents:request tokens, minted and renewed by the ops broker. Never paste or print."},
+    {"match": "^LIFEOS_AGENT_JWT_PRIVATE_KEY$", "provider": "lifeos", "kind": "signing key", "use": "Broker only. No other workload may read the value (MB-011)."},
+    {"match": "^(LIFEOS_|PLATFORM_OWNER_|OWNER_EMAIL$)", "provider": "lifeos", "kind": "app config", "use": "LifeOS deploy configuration. Deploy tooling only."},
+    {"match": "^AGENT_", "provider": "agent-extensions", "kind": "instruction bundle", "use": "Agent instruction bundle; `ae bundle` materializes it at session start."},
+    {"match": "^(AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY)$", "provider": "aws", "kind": "cloud", "use": "Harness-provided cloud credential. Check its purpose before use; never assume it is the owner's."},
+    {"match": "^CLOUDSDK_AUTH_ACCESS_TOKEN$", "provider": "google-cloud", "kind": "cloud", "use": "Short-lived token for `gcloud`/`bq`/`gsutil`, provided by the harness."}
+  ],
+  "clis": ["git", "gh", "gcloud", "aws", "az", "infisical", "cloudflared", "wrangler", "terraform", "tofu", "kubectl", "docker", "ssh", "uv", "node", "npm", "python3", "pwsh", "jq", "curl"],
+  "env_name_pattern": "(TOKEN|SECRET|PASSWORD|PASSPHRASE|API_KEY|_KEY_ID|ACCESS_KEY|CLIENT_ID|PROJECT_ID|_PAT)$",
+  "env_name_ignore": ["^MAX_THINKING_TOKENS$", "^CLAUDE_", "^CCR_", "^GIT_CONFIG_KEY_", "^BUN_"]
+}
