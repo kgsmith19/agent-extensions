@@ -1,0 +1,354 @@
+{
+  "$defs": {
+    "OrdinaryRole": {
+      "additionalProperties": false,
+      "properties": {
+        "authority_ceiling": {
+          "const": "bounded",
+          "title": "Authority Ceiling",
+          "type": "string"
+        },
+        "may_mint_owner_session": {
+          "const": false,
+          "title": "May Mint Owner Session",
+          "type": "boolean"
+        },
+        "role": {
+          "maxLength": 80,
+          "minLength": 2,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "authority_ceiling",
+        "may_mint_owner_session"
+      ],
+      "title": "OrdinaryRole",
+      "type": "object"
+    },
+    "ProviderMapping": {
+      "additionalProperties": false,
+      "properties": {
+        "authority_classes": {
+          "items": {
+            "enum": [
+              "browser-session-operator",
+              "cloud-admin",
+              "identity-admin",
+              "repository-admin",
+              "recovery-operator",
+              "secrets-admin",
+              "workspace-admin"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Authority Classes",
+          "type": "array"
+        },
+        "principal_kind": {
+          "enum": [
+            "human-delegated",
+            "managed-browser-profile",
+            "service-principal"
+          ],
+          "title": "Principal Kind",
+          "type": "string"
+        },
+        "principal_ref": {
+          "maxLength": 80,
+          "minLength": 2,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Principal Ref",
+          "type": "string"
+        },
+        "provider": {
+          "maxLength": 80,
+          "minLength": 2,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Provider",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "principal_ref",
+        "principal_kind",
+        "authority_classes"
+      ],
+      "title": "ProviderMapping",
+      "type": "object"
+    },
+    "RecoveryPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "independent_from_standin": {
+          "const": true,
+          "title": "Independent From Standin",
+          "type": "boolean"
+        },
+        "independent_human_principal": {
+          "const": "physical-owner",
+          "title": "Independent Human Principal",
+          "type": "string"
+        },
+        "kill_switch_ref": {
+          "maxLength": 80,
+          "minLength": 2,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Kill Switch Ref",
+          "type": "string"
+        },
+        "local_workspace_ref": {
+          "maxLength": 80,
+          "minLength": 2,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Local Workspace Ref",
+          "type": "string"
+        },
+        "revoke_sla_seconds": {
+          "exclusiveMinimum": 0,
+          "maximum": 900,
+          "title": "Revoke Sla Seconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "independent_human_principal",
+        "independent_from_standin",
+        "kill_switch_ref",
+        "local_workspace_ref",
+        "revoke_sla_seconds"
+      ],
+      "title": "RecoveryPolicy",
+      "type": "object"
+    },
+    "RollbackPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "disable_role_ref": {
+          "maxLength": 80,
+          "minLength": 2,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Disable Role Ref",
+          "type": "string"
+        },
+        "provider_recovery_ref": {
+          "maxLength": 80,
+          "minLength": 2,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Provider Recovery Ref",
+          "type": "string"
+        },
+        "restore_scoped_roles": {
+          "const": true,
+          "title": "Restore Scoped Roles",
+          "type": "boolean"
+        },
+        "revoke_sessions_ref": {
+          "maxLength": 80,
+          "minLength": 2,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Revoke Sessions Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "disable_role_ref",
+        "revoke_sessions_ref",
+        "restore_scoped_roles",
+        "provider_recovery_ref"
+      ],
+      "title": "RollbackPolicy",
+      "type": "object"
+    },
+    "SecretBoundary": {
+      "additionalProperties": false,
+      "properties": {
+        "cache_ttl_max_seconds": {
+          "maximum": 900,
+          "minimum": 0,
+          "title": "Cache Ttl Max Seconds",
+          "type": "integer"
+        },
+        "model_context_allowed": {
+          "const": false,
+          "title": "Model Context Allowed",
+          "type": "boolean"
+        },
+        "ordinary_logs_allowed": {
+          "const": false,
+          "title": "Ordinary Logs Allowed",
+          "type": "boolean"
+        },
+        "stored_material": {
+          "const": "identifiers-names-versions-digests-only",
+          "title": "Stored Material",
+          "type": "string"
+        },
+        "target_process_delivery_only": {
+          "const": true,
+          "title": "Target Process Delivery Only",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "stored_material",
+        "target_process_delivery_only",
+        "model_context_allowed",
+        "ordinary_logs_allowed",
+        "cache_ttl_max_seconds"
+      ],
+      "title": "SecretBoundary",
+      "type": "object"
+    },
+    "SessionPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "credential_ttl_max_seconds": {
+          "exclusiveMinimum": 0,
+          "maximum": 900,
+          "title": "Credential Ttl Max Seconds",
+          "type": "integer"
+        },
+        "provider_read_back_required": {
+          "const": true,
+          "title": "Provider Read Back Required",
+          "type": "boolean"
+        },
+        "session_bound": {
+          "const": true,
+          "title": "Session Bound",
+          "type": "boolean"
+        },
+        "signed_capsule_required": {
+          "const": true,
+          "title": "Signed Capsule Required",
+          "type": "boolean"
+        },
+        "unknown_harness_mode": {
+          "const": "restricted-degraded",
+          "title": "Unknown Harness Mode",
+          "type": "string"
+        }
+      },
+      "required": [
+        "credential_ttl_max_seconds",
+        "signed_capsule_required",
+        "session_bound",
+        "provider_read_back_required",
+        "unknown_harness_mode"
+      ],
+      "title": "SessionPolicy",
+      "type": "object"
+    },
+    "SourceRevision": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Digest",
+          "type": "string"
+        },
+        "source": {
+          "maxLength": 80,
+          "minLength": 2,
+          "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "digest"
+      ],
+      "title": "SourceRevision",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Secret-free policy contract; validation never confers authority.",
+  "properties": {
+    "authority_level": {
+      "const": "owner-equivalent",
+      "title": "Authority Level",
+      "type": "string"
+    },
+    "canonical_outcome": {
+      "const": "kgsmith19/agent-extensions#98",
+      "title": "Canonical Outcome",
+      "type": "string"
+    },
+    "grants_live_authority": {
+      "const": false,
+      "title": "Grants Live Authority",
+      "type": "boolean"
+    },
+    "logical_identity": {
+      "const": "owner-standin",
+      "title": "Logical Identity",
+      "type": "string"
+    },
+    "ordinary_roles": {
+      "items": {
+        "$ref": "#/$defs/OrdinaryRole"
+      },
+      "minItems": 1,
+      "title": "Ordinary Roles",
+      "type": "array"
+    },
+    "provider_mappings": {
+      "items": {
+        "$ref": "#/$defs/ProviderMapping"
+      },
+      "minItems": 1,
+      "title": "Provider Mappings",
+      "type": "array"
+    },
+    "recovery": {
+      "$ref": "#/$defs/RecoveryPolicy"
+    },
+    "rollback": {
+      "$ref": "#/$defs/RollbackPolicy"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "secret_boundary": {
+      "$ref": "#/$defs/SecretBoundary"
+    },
+    "session_policy": {
+      "$ref": "#/$defs/SessionPolicy"
+    },
+    "source_revisions": {
+      "items": {
+        "$ref": "#/$defs/SourceRevision"
+      },
+      "minItems": 1,
+      "title": "Source Revisions",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "logical_identity",
+    "authority_level",
+    "canonical_outcome",
+    "grants_live_authority",
+    "provider_mappings",
+    "ordinary_roles",
+    "source_revisions",
+    "secret_boundary",
+    "session_policy",
+    "recovery",
+    "rollback"
+  ],
+  "title": "OwnerStandInContract",
+  "type": "object"
+}
