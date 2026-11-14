@@ -1,6 +1,6 @@
 # Owner Stand-In AC2a broker protocol core
 
-Parent: `kgsmith19/agent-extensions#98`  
+Parent: `kgsmith19/agent-extensions#98`
 Child: `kgsmith19/agent-extensions#111`
 
 ## Outcome
