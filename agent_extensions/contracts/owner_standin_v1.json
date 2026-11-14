@@ -1,0 +1,99 @@
+{
+  "schema_version": "1.0.0",
+  "logical_identity": "owner-standin",
+  "authority_level": "owner-equivalent",
+  "canonical_outcome": "kgsmith19/agent-extensions#98",
+  "grants_live_authority": false,
+  "provider_mappings": [
+    {
+      "provider": "github",
+      "principal_ref": "github-owner-standin",
+      "principal_kind": "human-delegated",
+      "authority_classes": ["repository-admin", "identity-admin"]
+    },
+    {
+      "provider": "infisical",
+      "principal_ref": "infisical-owner-standin",
+      "principal_kind": "service-principal",
+      "authority_classes": ["secrets-admin", "identity-admin"]
+    },
+    {
+      "provider": "google",
+      "principal_ref": "google-owner-standin",
+      "principal_kind": "human-delegated",
+      "authority_classes": ["workspace-admin", "identity-admin"]
+    },
+    {
+      "provider": "cloud",
+      "principal_ref": "cloud-owner-standin",
+      "principal_kind": "service-principal",
+      "authority_classes": ["cloud-admin", "identity-admin"]
+    },
+    {
+      "provider": "browser",
+      "principal_ref": "owner-standin-browser",
+      "principal_kind": "managed-browser-profile",
+      "authority_classes": ["browser-session-operator", "recovery-operator"]
+    }
+  ],
+  "ordinary_roles": [
+    {
+      "role": "ai-coding-harness",
+      "authority_ceiling": "bounded",
+      "may_mint_owner_session": false
+    },
+    {
+      "role": "developer",
+      "authority_ceiling": "bounded",
+      "may_mint_owner_session": false
+    },
+    {
+      "role": "reviewer",
+      "authority_ceiling": "bounded",
+      "may_mint_owner_session": false
+    },
+    {
+      "role": "ci",
+      "authority_ceiling": "bounded",
+      "may_mint_owner_session": false
+    },
+    {
+      "role": "deploy",
+      "authority_ceiling": "bounded",
+      "may_mint_owner_session": false
+    }
+  ],
+  "source_revisions": [
+    {
+      "source": "standard-lock",
+      "digest": "sha256:d2d32f699836f096f689e9a23036d6cf1f2c5601c039a220a3346b1d0df9d182"
+    }
+  ],
+  "secret_boundary": {
+    "stored_material": "identifiers-names-versions-digests-only",
+    "target_process_delivery_only": true,
+    "model_context_allowed": false,
+    "ordinary_logs_allowed": false,
+    "cache_ttl_max_seconds": 300
+  },
+  "session_policy": {
+    "credential_ttl_max_seconds": 900,
+    "signed_capsule_required": true,
+    "session_bound": true,
+    "provider_read_back_required": true,
+    "unknown_harness_mode": "restricted-degraded"
+  },
+  "recovery": {
+    "independent_human_principal": "physical-owner",
+    "independent_from_standin": true,
+    "kill_switch_ref": "owner-standin-global-revoke",
+    "local_workspace_ref": "local-recovery-workspace",
+    "revoke_sla_seconds": 900
+  },
+  "rollback": {
+    "disable_role_ref": "owner-standin-disable",
+    "revoke_sessions_ref": "owner-standin-session-revoke",
+    "restore_scoped_roles": true,
+    "provider_recovery_ref": "provider-independent-recovery"
+  }
+}
