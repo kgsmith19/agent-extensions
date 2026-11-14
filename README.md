@@ -11,6 +11,16 @@ See [AGENTS.md](./AGENTS.md) for what's here and how to add to it, and
 [the design spec](./docs/superpowers/specs/2026-08-20-agent-extensions-design.md)
 for why it's built this way.
 
+## Owner Stand-In authority boundary
+
+[`agent-extensions#98`](https://github.com/kgsmith19/agent-extensions/issues/98)
+is the only canonical Owner Stand-In control-plane outcome. The checked-in
+[v1 threat model](./docs/OWNER_STANDIN_THREAT_MODEL.md) and executable contract
+define its identity, provider aliases, ordinary-role separation, secret/PII
+boundary, Kyle takeover, and rollback. This policy slice **grants no live authority**;
+a future session must still prove the broker, signed capsule,
+provider grants, read-back, and recovery controls before reporting READY.
+
 ## Install
 
 ```bash
