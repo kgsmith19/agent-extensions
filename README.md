@@ -18,8 +18,11 @@ is the only canonical Owner Stand-In control-plane outcome. The checked-in
 [v1 threat model](./docs/OWNER_STANDIN_THREAT_MODEL.md) and executable contract
 define its identity, provider aliases, ordinary-role separation, secret/PII
 boundary, Kyle takeover, and rollback. This policy slice **grants no live authority**;
-a future session must still prove the broker, signed capsule,
-provider grants, read-back, and recovery controls before reporting READY.
+the [AC2a broker protocol core](./docs/OWNER_STANDIN_BROKER_CORE.md) now
+enforces one-use challenge bindings and expiring session grants, but is not a
+deployed WebAuthn verifier or live authority path. A future session must still
+prove the provider adapter, deployment, signed capsule, provider grants,
+read-back, and recovery controls before reporting READY.
 
 ## Install
 
